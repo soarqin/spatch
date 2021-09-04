@@ -1,0 +1,5 @@
+add_library(lzma_enc STATIC CpuArch.c LzmaEnc.c LzFind.c)
+target_include_directories(lzma_enc PUBLIC .)
+target_compile_definitions(lzma_enc PRIVATE _7ZIP_ST FORCE_SATUR_SUB_128)
+add_library(lzma_dec STATIC LzmaDec.c)
+target_include_directories(lzma_dec PUBLIC .)
