@@ -11,15 +11,34 @@
 static void *SzAlloc(ISzAllocPtr p, size_t size) { (void*)p; return malloc(size); }
 static void SzFree(ISzAllocPtr p, void *address) { (void*)p; free(address); }
 
+enum {
+    DIFF_TYPE_CHANGE = 0,
+    DIFF_TYPE_CHANGE_LZMA = 1,
+    DIFF_TYPE_ADD_OR_REPLACE = 2,
+    DIFF_TYPE_ADD_OR_REPLACE_LZMA = 3,
+};
+
+typedef struct seq_in_file_s {
+    ISeqInStream stream;
+    struct vfs_file_handle *fin;
+} seq_in_file_t;
+
 typedef struct seq_in_stream_s {
     ISeqInStream stream;
     memstream_t *stm;
 } seq_in_stream_t;
 
-typedef struct seq_out_stream_s {
+typedef struct seq_out_file_s {
     ISeqOutStream stream;
     struct vfs_file_handle *fout;
-} seq_out_stream_t;
+} seq_out_file_t;
+
+static SRes file_read(const ISeqInStream *p, void *buf, size_t *size) {
+    const seq_in_file_t *stm = (const seq_in_file_t*)p;
+    int64_t bytes = vfs.read(stm->fin, buf, *size);
+    *size = bytes > 0 ? bytes : 0;
+    return SZ_OK;
+}
 
 static SRes stream_read(const ISeqInStream *p, void *buf, size_t *size) {
     const seq_in_stream_t *stm = (const seq_in_stream_t*)p;
@@ -29,11 +48,11 @@ static SRes stream_read(const ISeqInStream *p, void *buf, size_t *size) {
 }
 
 static size_t stream_write(const ISeqOutStream *p, const void *buf, size_t size) {
-    const seq_out_stream_t *stm = (const seq_out_stream_t*)p;
+    const seq_out_file_t *stm = (const seq_out_file_t*)p;
     return vfs.write(stm->fout, buf, size);
 }
 
-static int do_stream_compress(memstream_t *input, struct vfs_file_handle *fout) {
+static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_file_t *stm_out) {
     size_t comp_size;
     uint64_t file_offset, file_offset2;
     int i;
@@ -45,12 +64,6 @@ static int do_stream_compress(memstream_t *input, struct vfs_file_handle *fout) 
     CLzmaEncProps props;
     ISzAlloc my_alloc = { SzAlloc, SzFree };
 
-    seq_in_stream_t stm_in;
-    seq_out_stream_t stm_out;
-    stm_in.stream.Read = stream_read;
-    stm_in.stm = input;
-    stm_out.stream.Write = stream_write;
-    stm_out.fout = fout;
     enc = LzmaEnc_Create(&my_alloc);
     LzmaEncProps_Init(&props);
     props.level = 9;
@@ -61,16 +74,17 @@ static int do_stream_compress(memstream_t *input, struct vfs_file_handle *fout) 
     if (res != SZ_OK) {
         return -res;
     }
-    *(uint32_t*)&header[sizeof(uint32_t)] = memstream_size(input);
-    file_offset = vfs.tell(fout);
-    stream_write(&stm_out.stream, header, header_size + sizeof(uint32_t) * 2);
-    res = LzmaEnc_Encode(enc, &stm_out.stream, &stm_in.stream,
+
+    *(uint32_t*)&header[sizeof(uint32_t)] = input_size;
+    file_offset = vfs.tell(stm_out->fout);
+    vfs.write(stm_out->fout, header, header_size + sizeof(uint32_t) * 2);
+    res = LzmaEnc_Encode(enc, &stm_out->stream, stm_in,
                          NULL, &my_alloc, &my_alloc);
-    file_offset2 = vfs.tell(fout);
-    vfs.seek(fout, file_offset, VFS_SEEK_POSITION_START);
+    file_offset2 = vfs.tell(stm_out->fout);
+    vfs.seek(stm_out->fout, file_offset, VFS_SEEK_POSITION_START);
     comp_size = file_offset2 - file_offset - sizeof(uint32_t);
-    vfs.write(fout, &comp_size, sizeof(uint32_t));
-    vfs.seek(fout, file_offset2, VFS_SEEK_POSITION_START);
+    vfs.write(stm_out->fout, &comp_size, sizeof(uint32_t));
+    vfs.seek(stm_out->fout, file_offset2, VFS_SEEK_POSITION_START);
     LzmaEnc_Destroy(enc, &my_alloc, &my_alloc);
     fprintf(stdout, "Compressed size:  %lu\n", comp_size);
     return -res;
@@ -172,12 +186,22 @@ end:
     }
     fprintf(stdout, "Patch file size:  %lu\n", memstream_size(stm));
     if (compress) {
+        seq_in_stream_t stm_in;
+        seq_out_file_t stm_out;
+
+        uint32_t size = memstream_size(stm);
         uint8_t type = 1;
         vfs.write(output_file, &type, 1);
-        do_stream_compress(stm, output_file);
+
+        stm_in.stream.Read = stream_read;
+        stm_in.stm = stm;
+        stm_out.stream.Write = stream_write;
+        stm_out.fout = output_file;
+        do_stream_compress(&stm_in.stream, size, &stm_out);
     } else {
-        uint8_t type = 0;
         uint32_t size = memstream_size(stm);
+
+        uint8_t type = 0;
         vfs.write(output_file, &type, 1);
         vfs.write(output_file, &size, sizeof(uint32_t));
         while (1) {
@@ -194,14 +218,52 @@ end:
     return 0;
 }
 
+int make_add_file(const char *relpath,
+                  struct vfs_file_handle *input_file,
+                  struct vfs_file_handle *output_file,
+                  int compress) {
+    {
+        uint16_t namelen = strlen(relpath);
+        vfs.write(output_file, &namelen, 2);
+        vfs.write(output_file, relpath, namelen);
+    }
+    if (compress) {
+        seq_in_file_t stm_in;
+        seq_out_file_t stm_out;
+
+        uint32_t size = vfs.size(input_file);
+        uint8_t type = 3;
+        vfs.write(output_file, &type, 1);
+
+        stm_in.stream.Read = stream_read;
+        stm_in.fin = input_file;
+        stm_out.stream.Write = stream_write;
+        stm_out.fout = output_file;
+        do_stream_compress(&stm_in.stream, size, &stm_out);
+    } else {
+        uint32_t size = vfs.size(input_file);
+
+        uint8_t type = 2;
+        vfs.write(output_file, &type, 1);
+        vfs.write(output_file, &size, sizeof(uint32_t));
+        while (1) {
+            uint8_t buf[256 * 1024];
+            int64_t rd = vfs.read(input_file, buf, 256 * 1024);
+            if (rd > 0) {
+                vfs.write(output_file, buf, rd);
+            }
+            if (rd < 256 * 1024) {
+                break;
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
     int ret;
-    source_file = vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
-    if (!source_file) {
-        fprintf(stderr, "Unable to read from source file!\n");
-        goto end;
-    }
+    source_file = (argv[1][0] == '-' && argv[1][1] == 0) ? NULL : vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
     input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
     if (!input_file) {
         fprintf(stderr, "Unable to read from input file!\n");
@@ -212,7 +274,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unable to write output file!\n");
         goto end;
     }
-    ret = make_diff(argv[1], source_file, input_file, output_file, argc > 4 && argv[4][0] != '0');
+    if (source_file) {
+        ret = make_diff(argv[1], source_file, input_file, output_file, argc > 4 && argv[4][0] != '0');
+    } else {
+        ret = make_add_file(argv[2], input_file, output_file, argc > 4 && argv[4][0] != '0');
+    }
 
 end:
     if (output_file) vfs.close(output_file);

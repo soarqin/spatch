@@ -48,10 +48,16 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         goto end;
     }
     name[namelen] = 0;
-    fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
-    if (!fsrc) {
-        fprintf(stderr, "Unable to open source file!\n");
+    if (vfs.read(input_file, &type, 1) < 1) {
+        ret = -2;
         goto end;
+    }
+    if (type < 2) {
+        fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
+        if (!fsrc) {
+            fprintf(stderr, "Unable to open source file!\n");
+            goto end;
+        }
     }
     if (is_dir) {
         char path[1024];
@@ -61,12 +67,13 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
     } else {
         fout = vfs.open(output_path, VFS_FILE_ACCESS_WRITE, 0);
     }
-    if (vfs.read(input_file, &type, 1) < 1) {
+    if (vfs.read(input_file, &inp_size, sizeof(uint32_t)) < sizeof(uint32_t)) {
         ret = -2;
         goto end;
     }
-    if (vfs.read(input_file, &inp_size, sizeof(uint32_t)) < sizeof(uint32_t)) {
-        ret = -2;
+    if (type == 2 || type == 3) {
+        /* TODO: file add/replace */
+        ret = 0;
         goto end;
     }
     inp = malloc(inp_size);
