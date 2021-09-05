@@ -2,21 +2,24 @@
 #include "LzmaDec.h"
 
 #include "util.h"
+#include "vfs.h"
 
 #include <stdint.h>
-
-static uint8_t *blkdata = NULL;
 
 static void *SzAlloc(ISzAllocPtr p, size_t size) { (void*)p; return malloc(size); }
 static void SzFree(ISzAllocPtr p, void *address) { (void*)p; free(address); }
 
 static int sp_getblk(xd3_stream *stream, xd3_source *source, xoff_t blkno) {
+    uint8_t *blkdata = *(uint8_t**)stream->opaque;
+    int64_t bytes;
     if (!blkdata) {
-        blkdata = malloc(source->blksize);
+        *(void**)stream->opaque = malloc(source->blksize);
+        blkdata = *(uint8_t**)stream->opaque;
     }
-    fseek(source->ioh, source->blksize * blkno, SEEK_SET);
+    vfs.seek(source->ioh, source->blksize * blkno, VFS_SEEK_POSITION_START);
+    bytes = vfs.read(source->ioh, blkdata, source->blksize);
     source->curblkno = blkno;
-    source->onblk = fread(blkdata, 1, source->blksize, source->ioh);
+    source->onblk = bytes;
     source->curblk = blkdata;
     return 0;
 }
@@ -24,6 +27,7 @@ static int sp_getblk(xd3_stream *stream, xd3_source *source, xoff_t blkno) {
 int main(int argc, char *argv[]) {
     int ret = 0;
     void *data = NULL;
+    void *blkdata = NULL;
     size_t data_size = 0;
     uint8_t *inp = NULL;
     size_t src_size = 0, inp_size = 0;
@@ -31,8 +35,8 @@ int main(int argc, char *argv[]) {
     xd3_source source = {};
     xd3_stream stream = {};
     xd3_config config = {};
-    FILE *fout = NULL, *fsrc = NULL;
-    fsrc = fopen(argv[1], "rb");
+    struct vfs_file_handle *fout = NULL, *fsrc = NULL;
+    fsrc = vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
     if (!fsrc) {
         fprintf(stderr, "Unable to open source file!\n");
         goto end;
@@ -42,18 +46,17 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unable to open input file!\n");
         goto end;
     }
-    fout = fopen(argv[3], "wb");
+    fout = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
     if (!fout) {
         fprintf(stderr, "Unable to write output file!\n");
         goto end;
     }
-    fseek(fsrc, 0, SEEK_END);
-    src_size = ftello64(fsrc);
-    fseek(fsrc, 0, SEEK_SET);
+    src_size = vfs.size(fsrc);
 
     xd3_init_config(&config, 0);
     config.winsize = 256 * 1024;
     config.getblk = sp_getblk;
+    config.opaque = &blkdata;
     ret = xd3_config_stream(&stream, &config);
     if (ret != 0) {
         fprintf(stderr, "Error create stream!\n");
@@ -109,7 +112,7 @@ int main(int argc, char *argv[]) {
             break;
         }
         case XD3_OUTPUT:
-            fwrite(stream.next_out, 1, stream.avail_out, fout);
+            vfs.write(fout, stream.next_out, stream.avail_out);
             xd3_consume_output(&stream);
             break;
         case XD3_GOTHEADER:
@@ -124,8 +127,8 @@ int main(int argc, char *argv[]) {
     }
 end:
     xd3_close_stream(&stream);
-    if (fout) fclose(fout);
-    if (fsrc) fclose(fsrc);
+    if (fout) vfs.close(fout);
+    if (fsrc) vfs.close(fsrc);
     if (inp) free(inp);
     if (blkdata) free(blkdata);
     if (data) free(data);

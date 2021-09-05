@@ -3,9 +3,9 @@
 #include "LzmaEnc.h"
 
 #include "util.h"
+#include "vfs.h"
 #include "memstream.h"
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <stdint.h>
 
@@ -19,22 +19,22 @@ typedef struct seq_in_stream_s {
 
 typedef struct seq_out_stream_s {
     ISeqOutStream stream;
-    FILE *fout;
+    struct vfs_file_handle *fout;
 } seq_out_stream_t;
 
-SRes stream_read(const ISeqInStream *p, void *buf, size_t *size) {
+static SRes stream_read(const ISeqInStream *p, void *buf, size_t *size) {
     const seq_in_stream_t *stm = (const seq_in_stream_t*)p;
     if (!stm || !stm->stm) { return SZ_ERROR_DATA; }
     *size = memstream_read(stm->stm, buf, *size);
     return SZ_OK;
 }
 
-size_t stream_write(const ISeqOutStream *p, const void *buf, size_t size) {
+static size_t stream_write(const ISeqOutStream *p, const void *buf, size_t size) {
     const seq_out_stream_t *stm = (const seq_out_stream_t*)p;
-    return fwrite(buf, 1, size, stm->fout);
+    return vfs.write(stm->fout, buf, size);
 }
 
-int do_stream_compress(memstream_t *input, FILE *fout) {
+static int do_stream_compress(memstream_t *input, struct vfs_file_handle *fout) {
     size_t comp_size;
     uint64_t file_offset, file_offset2;
     int i;
@@ -63,15 +63,15 @@ int do_stream_compress(memstream_t *input, FILE *fout) {
         return -res;
     }
     *(uint32_t*)&header[sizeof(uint32_t)] = memstream_size(input);
-    file_offset = ftello64(fout);
+    file_offset = vfs.tell(fout);
     stream_write(&stm_out.stream, header, header_size + sizeof(uint32_t) * 2);
     res = LzmaEnc_Encode(enc, &stm_out.stream, &stm_in.stream,
                          NULL, &my_alloc, &my_alloc);
-    file_offset2 = ftello64(fout);
-    fseek(fout, file_offset, SEEK_SET);
+    file_offset2 = vfs.tell(fout);
+    vfs.seek(fout, file_offset, VFS_SEEK_POSITION_START);
     comp_size = file_offset2 - file_offset - header_size - sizeof(uint32_t) * 2;
-    fwrite(&comp_size, 1, sizeof(uint32_t), fout);
-    fseek(fout, file_offset2, SEEK_SET);
+    vfs.write(fout, &comp_size, sizeof(uint32_t));
+    vfs.seek(fout, file_offset2, VFS_SEEK_POSITION_START);
     LzmaEnc_Destroy(enc, &my_alloc, &my_alloc);
     comp_size += header_size + sizeof(uint32_t) * 2;
     fprintf(stdout, "Compressed size:  %lu\n", comp_size);
@@ -86,7 +86,7 @@ int main(int argc, char *argv[]) {
     xd3_source source = {};
     xd3_stream stream = {};
     xd3_config config = {};
-    FILE *fout = NULL;
+    struct vfs_file_handle *fout = NULL;
     src = read_whole_file(argv[1], &src_size);
     if (!src) {
         fprintf(stderr, "Unable to read from source file!\n");
@@ -152,25 +152,25 @@ end:
 
     if (ret != 0) { return ret; }
 
-    fout = fopen(argv[3], "wb");
+    fout = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
     fprintf(stdout, "Patch file size:  %lu\n", memstream_size(stm));
     if (argc > 4 && argv[4][0] == '1') {
         uint8_t type = 1;
-        fwrite(&type, 1, 1, fout);
+        vfs.write(fout, &type, 1);
         do_stream_compress(stm, fout);
     } else {
         uint8_t type = 0;
-        fwrite(&type, 1, 1, fout);
+        vfs.write(fout, &type, 1);
         while (1) {
             uint8_t buf[256 * 1024];
             size_t rd = memstream_read(stm, buf, 256 * 1024);
-            fwrite(buf, 1, rd, fout);
+            vfs.write(fout, buf, rd);
             if (rd < 256 * 1024) {
                 break;
             }
         }
     }
-    fclose(fout);
+    vfs.close(fout);
     memstream_destroy(stm);
 
     return 0;
