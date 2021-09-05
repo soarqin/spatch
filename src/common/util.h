@@ -3,6 +3,9 @@
 #include <stdint.h>
 #include <stddef.h>
 
-uint8_t *read_whole_file(const char *filename, size_t *size);
-int do_mkdir(const char *path, int recursive);
-int file_exists(const char *path);
+#if defined(VFS_WIN32)
+int util_mkdir_unicode(const wchar_t *wpath, int recursive);
+#endif
+
+int util_mkdir(const char *path, int recursive);
+int util_file_exists(const char *path);

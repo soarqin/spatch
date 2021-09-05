@@ -1,9 +1,5 @@
 #include "util.h"
 
-#include "vfs.h"
-
-#include <stdlib.h>
-
 #if defined(VFS_WIN32)
 #include <windows.h>
 #include <shlwapi.h>
@@ -16,36 +12,14 @@
 #endif
 #endif
 
-uint8_t *read_whole_file(const char *filename, size_t *size) {
-    static uint8_t empty[1];
-    struct vfs_file_handle *handle = vfs.open(filename, VFS_FILE_ACCESS_READ, 0);
-    int64_t fsize;
-    if (!handle) { *size = 0; return empty; }
-    fsize = vfs.size(handle);
-    uint8_t *result = malloc(fsize);
-    if (!result) { vfs.close(handle); *size = 0; return empty; }
-    uint8_t *buffer = result;
-    int64_t left = fsize;
-    while(left > 0) {
-        int rsize = left > (INT_MAX >> 1) ? (INT_MAX >> 1) : left;
-        rsize = vfs.read(handle, buffer, rsize);
-        if (rsize <= 0) { break; }
-        buffer += rsize;
-        left -= rsize;
-    }
-    vfs.close(handle);
-    *size = fsize - left;
-    return result;
-}
-
 #if defined(VFS_WIN32)
-static inline int mkdir_unicode(const wchar_t *wpath, int recursive) {
+int util_mkdir_unicode(const wchar_t *wpath, int recursive) {
     if (recursive) {
         wchar_t n[MAX_PATH];
         lstrcpyW(n, wpath);
         PathRemoveFileSpecW(n);
         if (n[0] != 0 && !PathIsDirectoryW(n)) {
-            int ret = mkdir_unicode(n, recursive);
+            int ret = util_mkdir_unicode(n, recursive);
             if (ret != 0) return ret;
         }
     }
@@ -55,11 +29,11 @@ static inline int mkdir_unicode(const wchar_t *wpath, int recursive) {
 }
 #endif
 
-int do_mkdir(const char *path, int recursive) {
+int util_mkdir(const char *path, int recursive) {
 #if defined(VFS_WIN32)
     wchar_t wpath[MAX_PATH];
     MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH);
-    return mkdir_unicode(wpath, recursive);
+    return util_mkdir_unicode(wpath, recursive);
 #endif
 #if defined(VFS_UNIX)
     if (recursive) {
@@ -83,7 +57,7 @@ int do_mkdir(const char *path, int recursive) {
 #endif
 }
 
-int file_exists(const char *path) {
+int util_file_exists(const char *path) {
 #if defined(VFS_WIN32)
     wchar_t wpath[MAX_PATH];
     MultiByteToWideChar(CP_UTF8, 0, path, -1, wpath, MAX_PATH);

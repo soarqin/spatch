@@ -24,8 +24,8 @@ static int sp_getblk(xd3_stream *stream, xd3_source *source, xoff_t blkno) {
     return 0;
 }
 
-static int do_patch(struct vfs_file_handle *input_file, const char *src_path, const char *output_path, int is_dir) {
-    int ret = 0;
+static int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, const char *output_path, int is_dir) {
+    int ret = -1;
     void *data = NULL;
     void *blkdata = NULL;
     size_t data_size = 0;
@@ -39,8 +39,14 @@ static int do_patch(struct vfs_file_handle *input_file, const char *src_path, co
     uint16_t namelen = 0;
     uint8_t type = 0;
     char name[1024];
-    vfs.read(input_file, &namelen, 2);
-    vfs.read(input_file, name, namelen);
+    if (vfs.read(input_file, &namelen, 2) < 2) {
+        ret = -2;
+        goto end;
+    }
+    if (vfs.read(input_file, name, namelen) < namelen) {
+        ret = -2;
+        goto end;
+    }
     name[namelen] = 0;
     fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
     if (!fsrc) {
@@ -55,14 +61,23 @@ static int do_patch(struct vfs_file_handle *input_file, const char *src_path, co
     } else {
         fout = vfs.open(output_path, VFS_FILE_ACCESS_WRITE, 0);
     }
-    vfs.read(input_file, &type, 1);
-    vfs.read(input_file, &inp_size, sizeof(uint32_t));
+    if (vfs.read(input_file, &type, 1) < 1) {
+        ret = -2;
+        goto end;
+    }
+    if (vfs.read(input_file, &inp_size, sizeof(uint32_t)) < sizeof(uint32_t)) {
+        ret = -2;
+        goto end;
+    }
     inp = malloc(inp_size);
     if (!inp) {
         fprintf(stderr, "Out of memory!\n");
         goto end;
     }
-    vfs.read(input_file, inp, inp_size);
+    if (vfs.read(input_file, inp, inp_size) < inp_size) {
+        ret = -2;
+        goto end;
+    }
 
     src_size = vfs.size(fsrc);
 
@@ -73,7 +88,7 @@ static int do_patch(struct vfs_file_handle *input_file, const char *src_path, co
     ret = xd3_config_stream(&stream, &config);
     if (ret != 0) {
         fprintf(stderr, "Error create stream!\n");
-        return -1;
+        goto end;
     }
     source.blksize  = 256 * 1024;
     source.ioh = fsrc;
@@ -91,18 +106,24 @@ static int do_patch(struct vfs_file_handle *input_file, const char *src_path, co
         ISzAlloc my_alloc = { SzAlloc, SzFree };
         size_t orig_size = *(uint32_t*)(inp);
         size_t comp_size = inp_size - LZMA_PROPS_SIZE - sizeof(uint32_t);
-        uint8_t *dest = malloc(orig_size);
-        if (LzmaDecode(dest, &orig_size,
-                       inp + LZMA_PROPS_SIZE + sizeof(uint32_t), &comp_size,
-                       inp + sizeof(uint32_t), LZMA_PROPS_SIZE,
+        uint8_t *old = inp;
+        inp = malloc(orig_size);
+        if (!inp) {
+            inp = old;
+            fprintf(stderr, "Out of memory!\n");
+            goto end;
+        }
+        if (LzmaDecode(inp, &orig_size,
+                       old + LZMA_PROPS_SIZE + sizeof(uint32_t), &comp_size,
+                       old + sizeof(uint32_t), LZMA_PROPS_SIZE,
                        LZMA_FINISH_END, &status, &my_alloc) != SZ_OK) {
-            free(dest);
+            free(inp);
+            inp = old;
             fprintf(stderr, "Error decompress patch data!\n");
             goto end;
         }
-        free(inp);
-        inp = dest;
         inp_size = orig_size;
+        free(old);
     }
     ipos = 0;
     n = xd3_min(stream.winsize, inp_size - ipos);
@@ -148,6 +169,19 @@ end:
     return ret;
 }
 
+int do_multi_patch(struct vfs_file_handle *input_file, const char *output_path) {
+    while (1) {
+        int ret = do_single_patch(input_file, NULL, output_path, 1);
+        if (ret != 0) {
+            if (ret == -2) {
+                break;
+            }
+            return ret;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     const char *src_path = NULL, *input_path = NULL, *output_path = NULL;
     int is_dir = 0;
@@ -167,7 +201,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unable to open input file!\n");
         goto end;
     }
-    ret = do_patch(input_file, src_path, output_path, is_dir);
+    if (is_dir) {
+        ret = do_multi_patch(input_file, output_path);
+    } else {
+        ret = do_single_patch(input_file, src_path, output_path, is_dir);
+    }
 
 end:
     if (input_file) vfs.close(input_file);

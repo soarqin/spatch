@@ -180,7 +180,7 @@ int win32_vfs_stat(const char *path, int32_t *size) {
 }
 
 int win32_vfs_mkdir(const char *dir) {
-    return do_mkdir(dir, 1);
+    return util_mkdir(dir, 1);
 }
 
 struct vfs_dir_handle *win32_vfs_opendir(const char *dir, bool include_hidden) {
