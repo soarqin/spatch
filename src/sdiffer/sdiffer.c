@@ -2,7 +2,6 @@
 
 #include "LzmaEnc.h"
 
-#include "util.h"
 #include "vfs.h"
 #include "memstream.h"
 
@@ -69,16 +68,19 @@ static int do_stream_compress(memstream_t *input, struct vfs_file_handle *fout) 
                          NULL, &my_alloc, &my_alloc);
     file_offset2 = vfs.tell(fout);
     vfs.seek(fout, file_offset, VFS_SEEK_POSITION_START);
-    comp_size = file_offset2 - file_offset - header_size - sizeof(uint32_t) * 2;
+    comp_size = file_offset2 - file_offset - sizeof(uint32_t);
     vfs.write(fout, &comp_size, sizeof(uint32_t));
     vfs.seek(fout, file_offset2, VFS_SEEK_POSITION_START);
     LzmaEnc_Destroy(enc, &my_alloc, &my_alloc);
-    comp_size += header_size + sizeof(uint32_t) * 2;
     fprintf(stdout, "Compressed size:  %lu\n", comp_size);
     return -res;
 }
 
-int main(int argc, char *argv[]) {
+static int make_diff(const char *relpath,
+                     struct vfs_file_handle *source_file,
+                     struct vfs_file_handle *input_file,
+                     struct vfs_file_handle *output_file,
+                     int compress) {
     int ret = 0;
     uint8_t *src = NULL, *inp = NULL;
     size_t src_size = 0, inp_size = 0;
@@ -86,17 +88,27 @@ int main(int argc, char *argv[]) {
     xd3_source source = {};
     xd3_stream stream = {};
     xd3_config config = {};
-    struct vfs_file_handle *fout = NULL;
-    src = read_whole_file(argv[1], &src_size);
+
+    src_size = vfs.size(source_file);
+    src = malloc(src_size);
     if (!src) {
-        fprintf(stderr, "Unable to read from source file!\n");
+        ret = -1;
+        fprintf(stderr, "Out of memory!\n");
         goto end;
     }
-    inp = read_whole_file(argv[2], &inp_size);
+    vfs.seek(source_file, 0, VFS_SEEK_POSITION_START);
+    vfs.read(source_file, src, src_size);
+
+    inp_size = vfs.size(input_file);
+    inp = malloc(inp_size);
     if (!inp) {
-        fprintf(stderr, "Unable to read from input file!\n");
+        ret = -1;
+        fprintf(stderr, "Out of memory!\n");
         goto end;
     }
+    vfs.seek(input_file, 0, VFS_SEEK_POSITION_START);
+    vfs.read(input_file, inp, inp_size);
+
     xd3_init_config(&config, 0);
     config.winsize = inp_size;
     ret = xd3_config_stream(&stream, &config);
@@ -145,6 +157,7 @@ int main(int argc, char *argv[]) {
             goto end;
         }
     }
+
 end:
     xd3_close_stream(&stream);
     if (src) free(src);
@@ -152,26 +165,59 @@ end:
 
     if (ret != 0) { return ret; }
 
-    fout = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
+    {
+        uint16_t namelen = strlen(relpath);
+        vfs.write(output_file, &namelen, 2);
+        vfs.write(output_file, relpath, namelen);
+    }
     fprintf(stdout, "Patch file size:  %lu\n", memstream_size(stm));
-    if (argc > 4 && argv[4][0] == '1') {
+    if (compress) {
         uint8_t type = 1;
-        vfs.write(fout, &type, 1);
-        do_stream_compress(stm, fout);
+        vfs.write(output_file, &type, 1);
+        do_stream_compress(stm, output_file);
     } else {
         uint8_t type = 0;
-        vfs.write(fout, &type, 1);
+        uint32_t size = memstream_size(stm);
+        vfs.write(output_file, &type, 1);
+        vfs.write(output_file, &size, sizeof(uint32_t));
         while (1) {
             uint8_t buf[256 * 1024];
             size_t rd = memstream_read(stm, buf, 256 * 1024);
-            vfs.write(fout, buf, rd);
+            vfs.write(output_file, buf, rd);
             if (rd < 256 * 1024) {
                 break;
             }
         }
     }
-    vfs.close(fout);
     memstream_destroy(stm);
 
     return 0;
+}
+
+int main(int argc, char *argv[]) {
+    struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
+    int ret;
+    source_file = vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
+    if (!source_file) {
+        fprintf(stderr, "Unable to read from source file!\n");
+        goto end;
+    }
+    input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
+    if (!input_file) {
+        fprintf(stderr, "Unable to read from input file!\n");
+        goto end;
+    }
+    output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
+    if (!output_file) {
+        fprintf(stderr, "Unable to write output file!\n");
+        goto end;
+    }
+    ret = make_diff(argv[1], source_file, input_file, output_file, argc > 4 && argv[4][0] != '0');
+
+end:
+    if (output_file) vfs.close(output_file);
+    if (input_file) vfs.close(input_file);
+    if (source_file) vfs.close(source_file);
+
+    return ret;
 }

@@ -44,7 +44,7 @@ static inline int mkdir_unicode(const wchar_t *wpath, int recursive) {
         wchar_t n[MAX_PATH];
         lstrcpyW(n, wpath);
         PathRemoveFileSpecW(n);
-        if (!PathIsDirectoryW(n)) {
+        if (n[0] != 0 && !PathIsDirectoryW(n)) {
             int ret = mkdir_unicode(n, recursive);
             if (ret != 0) return ret;
         }
