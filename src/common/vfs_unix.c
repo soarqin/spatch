@@ -126,7 +126,10 @@ int unix_vfs_rename(const char *old_path, const char *new_path) {
 
 int unix_vfs_stat(const char *path, int32_t *size) {
     struct stat s;
-    if (stat(path, &s) != 0) return 0;
+    if (stat(path, &s) != 0) {
+        *size = 0;
+        return 0;
+    }
     if (size) *size = s.st_size;
     return VFS_STAT_IS_VALID | (S_ISCHR(s.st_mode) ? VFS_STAT_IS_DIRECTORY : 0) | (S_ISDIR(s.st_mode) ? VFS_STAT_IS_CHARACTER_SPECIAL : 0);
 }

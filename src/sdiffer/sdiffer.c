@@ -7,6 +7,7 @@
 
 #include <stdlib.h>
 #include <stdint.h>
+#include <locale.h>
 
 static void *SzAlloc(ISzAllocPtr p, size_t size) { (void*)p; return malloc(size); }
 static void SzFree(ISzAllocPtr p, void *address) { (void*)p; free(address); }
@@ -33,6 +34,11 @@ typedef struct seq_out_file_s {
     struct vfs_file_handle *fout;
 } seq_out_file_t;
 
+typedef struct compress_progress_s {
+    ICompressProgress progress;
+    uint64_t total;
+} compress_progress_t;
+
 static SRes file_read(const ISeqInStream *p, void *buf, size_t *size) {
     const seq_in_file_t *stm = (const seq_in_file_t*)p;
     int64_t bytes = vfs.read(stm->fin, buf, *size);
@@ -52,6 +58,12 @@ static size_t stream_write(const ISeqOutStream *p, const void *buf, size_t size)
     return vfs.write(stm->fout, buf, size);
 }
 
+static SRes compress_progress_callback(const ICompressProgress *p, UInt64 inSize, UInt64 outSize) {
+    compress_progress_t *progress = (compress_progress_t*)p;
+    fprintf(stdout, "\rProgress: %'llu/%'llu(%u%%)   Compressed: %'llu", inSize, progress->total, (uint32_t)(inSize * 100ULL / progress->total), outSize);
+    return SZ_OK;
+}
+
 static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_file_t *stm_out) {
     size_t comp_size;
     uint64_t file_offset, file_offset2;
@@ -59,6 +71,7 @@ static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_f
     SRes res;
     uint8_t header[LZMA_PROPS_SIZE + 8] = {};
     size_t header_size = LZMA_PROPS_SIZE;
+    compress_progress_t progress;
 
     CLzmaEncHandle enc;
     CLzmaEncProps props;
@@ -81,15 +94,17 @@ static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_f
     *(uint32_t*)&header[sizeof(uint32_t)] = input_size;
     file_offset = vfs.tell(stm_out->fout);
     vfs.write(stm_out->fout, header, header_size + sizeof(uint32_t) * 2);
+    progress.total = input_size;
+    progress.progress.Progress = compress_progress_callback;
     res = LzmaEnc_Encode(enc, &stm_out->stream, stm_in,
-                         NULL, &my_alloc, &my_alloc);
+                         &progress.progress, &my_alloc, &my_alloc);
     file_offset2 = vfs.tell(stm_out->fout);
     vfs.seek(stm_out->fout, file_offset, VFS_SEEK_POSITION_START);
     comp_size = file_offset2 - file_offset - sizeof(uint32_t);
     vfs.write(stm_out->fout, &comp_size, sizeof(uint32_t));
     vfs.seek(stm_out->fout, file_offset2, VFS_SEEK_POSITION_START);
     LzmaEnc_Destroy(enc, &my_alloc, &my_alloc);
-    fprintf(stdout, "Compressed size:  %lu\n", comp_size);
+    fprintf(stdout, "\n");
     return -res;
 }
 
@@ -144,8 +159,8 @@ static int make_diff(const char *relpath,
         goto end;
     }
 
-    fprintf(stdout, "Source file size: %lu\n", src_size);
-    fprintf(stdout, "Dest file size:   %lu\n", inp_size);
+    fprintf(stdout, "Source file size: %'lu\n", src_size);
+    fprintf(stdout, "Dest file size:   %'lu\n", inp_size);
     n = xd3_min(stream.winsize, inp_size);
     stream.flags |= XD3_FLUSH;
     xd3_avail_input(&stream, inp + ipos, n);
@@ -187,7 +202,7 @@ end:
         vfs.write(output_file, &namelen, 2);
         vfs.write(output_file, relpath, namelen);
     }
-    fprintf(stdout, "Patch file size:  %lu\n", memstream_size(stm));
+    fprintf(stdout, "Patch file size:  %'lu\n", memstream_size(stm));
     if (compress) {
         seq_in_stream_t stm_in;
         seq_out_file_t stm_out;
@@ -266,6 +281,7 @@ int make_add_file(const char *relpath,
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
     int ret;
+    setlocale(LC_NUMERIC, "");
     source_file = (argv[1][0] == '-' && argv[1][1] == 0) ? NULL : vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
     input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
     if (!input_file) {

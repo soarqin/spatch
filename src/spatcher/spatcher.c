@@ -1,10 +1,10 @@
 #include "xdelta3.h"
 #include "LzmaDec.h"
 
-#include "util.h"
 #include "vfs.h"
 
 #include <stdint.h>
+#include <locale.h>
 
 static void *SzAlloc(ISzAllocPtr p, size_t size) { (void*)p; return malloc(size); }
 static void SzFree(ISzAllocPtr p, void *address) { (void*)p; free(address); }
@@ -53,7 +53,17 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         goto end;
     }
     if (type < 2) {
-        fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
+        if (is_dir) {
+            if (src_path && src_path[0] != 0) {
+                char path[1024];
+                snprintf(path, 1024, "%s/%s", src_path, name);
+                fsrc = vfs.open(path, VFS_FILE_ACCESS_READ, 0);
+            } else {
+                fsrc = vfs.open(name, VFS_FILE_ACCESS_READ, 0);
+            }
+        } else {
+            fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
+        }
         if (!fsrc) {
             fprintf(stderr, "Unable to open source file!\n");
             goto end;
@@ -94,7 +104,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
             uint32_t output_size;
             int64_t left = inp_size;
             vfs.read(input_file, &output_size, sizeof(uint32_t));
-            fprintf(stdout, "Original size: %u\n", output_size);
+            fprintf(stdout, "Original size: %'u\n", output_size);
             vfs.read(input_file, props, LZMA_PROPS_SIZE);
             left -= LZMA_PROPS_SIZE + sizeof(uint32_t);
             LzmaDec_Construct(&dec);
@@ -157,8 +167,8 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         goto end;
     }
 
-    fprintf(stdout, "Source file size: %lu\n", src_size);
-    fprintf(stdout, "Input file size:  %lu\n", inp_size);
+    fprintf(stdout, "Source file size: %'lu\n", src_size);
+    fprintf(stdout, "Input file size:  %'lu\n", inp_size);
 
     if (type == 1) {
         ELzmaStatus status;
@@ -228,9 +238,9 @@ end:
     return ret;
 }
 
-int do_multi_patch(struct vfs_file_handle *input_file, const char *output_path) {
+int do_multi_patch(const char *src_path, struct vfs_file_handle *input_file, const char *output_path) {
     while (1) {
-        int ret = do_single_patch(input_file, NULL, output_path, 1);
+        int ret = do_single_patch(input_file, src_path, output_path, 1);
         if (ret != 0) {
             if (ret == -2) {
                 break;
@@ -246,8 +256,12 @@ int main(int argc, char *argv[]) {
     int is_dir = 0;
     struct vfs_file_handle *input_file = NULL;
     int ret;
+    setlocale(LC_NUMERIC, "");
     if (argc > 3) {
         src_path = argv[1];
+        if ((src_path[0] != '-' || src_path[1] != 0) && vfs.stat(src_path, NULL) & VFS_STAT_IS_DIRECTORY) {
+            is_dir = 1;
+        }
         input_path = argv[2];
         output_path = argv[3];
     } else {
@@ -261,7 +275,7 @@ int main(int argc, char *argv[]) {
         goto end;
     }
     if (is_dir) {
-        ret = do_multi_patch(input_file, output_path);
+        ret = do_multi_patch(src_path, input_file, output_path);
     } else {
         ret = do_single_patch(input_file, src_path, output_path, is_dir);
     }
