@@ -67,7 +67,10 @@ static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_f
     enc = LzmaEnc_Create(&my_alloc);
     LzmaEncProps_Init(&props);
     props.level = 9;
-    LzmaEncProps_Normalize(&props);
+    props.fb = 256;
+    props.lc = 4;
+    props.lp = 2;
+    props.pb = 2;
     LzmaEnc_SetProps(enc, &props);
 
     res = LzmaEnc_WriteProperties(enc, header + sizeof(uint32_t) * 2, &header_size);
@@ -235,7 +238,7 @@ int make_add_file(const char *relpath,
         uint8_t type = 3;
         vfs.write(output_file, &type, 1);
 
-        stm_in.stream.Read = stream_read;
+        stm_in.stream.Read = file_read;
         stm_in.fin = input_file;
         stm_out.stream.Write = stream_write;
         stm_out.fout = output_file;

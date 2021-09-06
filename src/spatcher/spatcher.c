@@ -63,8 +63,10 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         char path[1024];
         vfs.mkdir(output_path);
         snprintf(path, 1024, "%s/%s", output_path, name);
+        fprintf(stdout, "Target file path: %s\n", path);
         fout = vfs.open(path, VFS_FILE_ACCESS_WRITE, 0);
     } else {
+        fprintf(stdout, "Target file path: %s\n", output_path);
         fout = vfs.open(output_path, VFS_FILE_ACCESS_WRITE, 0);
     }
     if (vfs.read(input_file, &inp_size, sizeof(uint32_t)) < sizeof(uint32_t)) {
@@ -72,7 +74,57 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         goto end;
     }
     if (type == 2 || type == 3) {
-        /* TODO: file add/replace */
+        if (type == 2) {
+            int64_t left = inp_size;
+            uint8_t buf[256 * 1024];
+            while (left > 0) {
+                int64_t bytes = vfs.read(input_file, buf, left < 256 * 1024 ? left : 256 * 1024);
+                if (bytes <= 0) {
+                    break;
+                }
+                vfs.write(fout, buf, bytes);
+                left -= bytes;
+            }
+        } else {
+            CLzmaDec dec;
+            uint8_t props[LZMA_PROPS_SIZE];
+            ELzmaStatus status;
+            ISzAlloc my_alloc = { SzAlloc, SzFree };
+            uint8_t buf[256 * 1024], buf_out[256 * 1024];
+            uint32_t output_size;
+            int64_t left = inp_size;
+            vfs.read(input_file, &output_size, sizeof(uint32_t));
+            fprintf(stdout, "Original size: %u\n", output_size);
+            vfs.read(input_file, props, LZMA_PROPS_SIZE);
+            left -= LZMA_PROPS_SIZE + sizeof(uint32_t);
+            LzmaDec_Construct(&dec);
+            LzmaDec_Allocate(&dec, props, LZMA_PROPS_SIZE, &my_alloc);
+            LzmaDec_Init(&dec);
+            while (left > 0) {
+                int64_t offset;
+                int64_t bytes = vfs.read(input_file, buf, left < 256 * 1024 ? left : 256 * 1024);
+                if (bytes <= 0) {
+                    break;
+                }
+                offset = 0;
+                while (offset < bytes) {
+                    SizeT sz_input = bytes - offset;
+                    SizeT sz_output = 256 * 1024;
+                    ret = -LzmaDec_DecodeToBuf(&dec, buf_out, &sz_output, buf + offset, &sz_input, LZMA_FINISH_ANY, &status);
+                    if (ret != SZ_OK) {
+                        LzmaDec_Free(&dec, &my_alloc);
+                        goto end;
+                    }
+                    offset += sz_input;
+                    if (sz_output == 0) {
+                        break;
+                    }
+                    vfs.write(fout, buf_out, sz_output);
+                }
+                left -= bytes;
+            }
+            LzmaDec_Free(&dec, &my_alloc);
+        }
         ret = 0;
         goto end;
     }
