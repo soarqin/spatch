@@ -70,13 +70,42 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         }
     }
     if (is_dir) {
-        char path[1024];
+        char path[1024], *rslash
+#if defined(_WIN32)
+        , *rslash2
+#endif
+        ;
         vfs.mkdir(output_path);
         snprintf(path, 1024, "%s/%s", output_path, name);
         fprintf(stdout, "Target file path: %s\n", path);
+        rslash = strrchr(path, '/');
+#if defined(_WIN32)
+        rslash2 = strrchr(path, '\\');
+        if (rslash < rslash2) rslash = rslash2;
+#endif
+        if (rslash) {
+            *rslash = 0;
+            vfs.mkdir(path);
+            *rslash = '/';
+        }
         fout = vfs.open(path, VFS_FILE_ACCESS_WRITE, 0);
     } else {
+        char *rslash
+#if defined(_WIN32)
+        , *rslash2
+#endif
+        ;
         fprintf(stdout, "Target file path: %s\n", output_path);
+        rslash = strrchr(output_path, '/');
+#if defined(_WIN32)
+        rslash2 = strrchr(output_path, '\\');
+        if (rslash < rslash2) rslash = rslash2;
+#endif
+        if (rslash) {
+            *rslash = 0;
+            vfs.mkdir(output_path);
+            *rslash = '/';
+        }
         fout = vfs.open(output_path, VFS_FILE_ACCESS_WRITE, 0);
     }
     if (vfs.read(input_file, &inp_size, sizeof(uint32_t)) < sizeof(uint32_t)) {
@@ -98,7 +127,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         } else {
             CLzmaDec dec;
             uint8_t props[LZMA_PROPS_SIZE];
-            ELzmaStatus status;
+            ELzmaStatus status = LZMA_STATUS_NOT_SPECIFIED;
             ISzAlloc my_alloc = { SzAlloc, SzFree };
             uint8_t buf[256 * 1024], buf_out[256 * 1024];
             uint32_t output_size;
@@ -132,6 +161,14 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
                     vfs.write(fout, buf_out, sz_output);
                 }
                 left -= bytes;
+            }
+            if (status != LZMA_STATUS_FINISHED_WITH_MARK) {
+                SizeT sz_input = 0;
+                SizeT sz_output = 256 * 1024;
+                ret = -LzmaDec_DecodeToBuf(&dec, buf_out, &sz_output, NULL, &sz_input, LZMA_FINISH_END, &status);
+                if (ret == SZ_OK && sz_output != 0) {
+                    vfs.write(fout, buf_out, sz_output);
+                }
             }
             LzmaDec_Free(&dec, &my_alloc);
         }

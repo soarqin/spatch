@@ -175,7 +175,7 @@ int win32_vfs_stat(const char *path, int32_t *size) {
     if (!FileNameUTF8ToUCS(path, filenamew)) return 0;
     struct _stat s;
     if (_wstat(filenamew, &s) != 0) {
-        *size = 0;
+        if (size) *size = 0;
         return 0;
     }
     if (size) *size = s.st_size;

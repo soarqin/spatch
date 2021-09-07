@@ -60,7 +60,7 @@ static size_t stream_write(const ISeqOutStream *p, const void *buf, size_t size)
 
 static SRes compress_progress_callback(const ICompressProgress *p, UInt64 inSize, UInt64 outSize) {
     compress_progress_t *progress = (compress_progress_t*)p;
-    fprintf(stdout, "\rProgress: %'llu/%'llu(%u%%)   Compressed: %'llu", inSize, progress->total, (uint32_t)(inSize * 100ULL / progress->total), outSize);
+    fprintf(stdout, "\r    Compressing: %'llu/%'llu(%u%%)   to: %'llu", inSize, progress->total, (uint32_t)(inSize * 100ULL / progress->total), outSize);
     return SZ_OK;
 }
 
@@ -84,6 +84,7 @@ static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_f
     props.lc = 4;
     props.lp = 2;
     props.pb = 2;
+    props.writeEndMark = 1;
     LzmaEnc_SetProps(enc, &props);
 
     res = LzmaEnc_WriteProperties(enc, header + sizeof(uint32_t) * 2, &header_size);
@@ -104,7 +105,7 @@ static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_f
     vfs.write(stm_out->fout, &comp_size, sizeof(uint32_t));
     vfs.seek(stm_out->fout, file_offset2, VFS_SEEK_POSITION_START);
     LzmaEnc_Destroy(enc, &my_alloc, &my_alloc);
-    fprintf(stdout, "\n");
+    fprintf(stdout, "\r    Compressing: %'llu/%'llu(100%%)   to: %'lu\n", progress.total, progress.total, comp_size);
     return -res;
 }
 
@@ -159,8 +160,10 @@ static int make_diff(const char *relpath,
         goto end;
     }
 
-    fprintf(stdout, "Source file size: %'lu\n", src_size);
-    fprintf(stdout, "Dest file size:   %'lu\n", inp_size);
+    fprintf(stdout, "  Source file path: %s\n", vfs.get_path(source_file));
+    fprintf(stdout, "  Input file path:  %s\n", vfs.get_path(input_file));
+    fprintf(stdout, "  Source file size: %'lu\n", src_size);
+    fprintf(stdout, "  Input file size:  %'lu\n", inp_size);
     n = xd3_min(stream.winsize, inp_size);
     stream.flags |= XD3_FLUSH;
     xd3_avail_input(&stream, inp + ipos, n);
@@ -202,7 +205,7 @@ end:
         vfs.write(output_file, &namelen, 2);
         vfs.write(output_file, relpath, namelen);
     }
-    fprintf(stdout, "Patch file size:  %'lu\n", memstream_size(stm));
+    fprintf(stdout, "  Patch data size:  %'lu\n", memstream_size(stm));
     if (compress) {
         seq_in_stream_t stm_in;
         seq_out_file_t stm_out;
@@ -240,6 +243,7 @@ int make_add_file(const char *relpath,
                   struct vfs_file_handle *input_file,
                   struct vfs_file_handle *output_file,
                   int compress) {
+    fprintf(stdout, "  Add file path:    %s\n", vfs.get_path(input_file));
     {
         uint16_t namelen = strlen(relpath);
         vfs.write(output_file, &namelen, 2);
@@ -282,33 +286,32 @@ int make_dir_diff(const char *relpath, const char *source_dir, const char *input
     int ret;
     struct vfs_dir_handle *inp_dir = vfs.opendir(input_dir, false);
     while (vfs.readdir(inp_dir)) {
+        char path[1024], source_path[1024], input_path[1024];
         const char *dir_name = vfs.dirent_get_name(inp_dir);
         if (dir_name[0] == '.') {
             continue;
         }
         if (vfs.dirent_is_dir(inp_dir)) {
-            char path[1024], new_source_dir[1024], new_input_dir[1024];
             if (relpath[0] == 0) {
                 snprintf(path, 1024, "%s", dir_name);
             } else {
                 snprintf(path, 1024, "%s/%s", relpath, dir_name);
             }
             if (source_dir[0] == 0) {
-                snprintf(new_source_dir, 1024, "%s", dir_name);
+                snprintf(source_path, 1024, "%s", dir_name);
             } else {
-                snprintf(new_source_dir, 1024, "%s/%s", source_dir, dir_name);
+                snprintf(source_path, 1024, "%s/%s", source_dir, dir_name);
             }
             if (input_dir[0] == 0) {
-                snprintf(new_input_dir, 1024, "%s", dir_name);
+                snprintf(input_path, 1024, "%s", dir_name);
             } else {
-                snprintf(new_input_dir, 1024, "%s/%s", input_dir, dir_name);
+                snprintf(input_path, 1024, "%s/%s", input_dir, dir_name);
             }
-            ret = make_dir_diff(path, new_source_dir, new_input_dir, output_file, compress);
+            ret = make_dir_diff(path, source_path, input_path, output_file, compress);
             if (ret != 0) {
                 return ret;
             }
         } else {
-            char path[1024], source_file[1024], input_file[1024];
             struct vfs_file_handle *fsrc, *finp;
             if (relpath[0] == 0) {
                 snprintf(path, 1024, "%s", dir_name);
@@ -316,20 +319,20 @@ int make_dir_diff(const char *relpath, const char *source_dir, const char *input
                 snprintf(path, 1024, "%s/%s", relpath, dir_name);
             }
             if (source_dir[0] == 0) {
-                snprintf(source_file, 1024, "%s", dir_name);
+                snprintf(source_path, 1024, "%s", dir_name);
             } else {
-                snprintf(source_file, 1024, "%s/%s", source_dir, dir_name);
+                snprintf(source_path, 1024, "%s/%s", source_dir, dir_name);
             }
             if (input_dir[0] == 0) {
-                snprintf(input_file, 1024, "%s", dir_name);
+                snprintf(input_path, 1024, "%s", dir_name);
             } else {
-                snprintf(input_file, 1024, "%s/%s", input_dir, dir_name);
+                snprintf(input_path, 1024, "%s/%s", input_dir, dir_name);
             }
-            finp = vfs.open(input_file, VFS_FILE_ACCESS_READ, 0);
+            finp = vfs.open(input_path, VFS_FILE_ACCESS_READ, 0);
             if (!finp) {
                 return -1;
             }
-            fsrc = vfs.open(source_file, VFS_FILE_ACCESS_READ, 0);
+            fsrc = vfs.open(source_path, VFS_FILE_ACCESS_READ, 0);
             if (fsrc) {
                 ret = make_diff(path, fsrc, finp, output_file, compress);
                 vfs.close(fsrc);
@@ -350,7 +353,7 @@ int main(int argc, char *argv[]) {
     int ret;
     int compress = argc > 4 && argv[4][0] != '0';
     setlocale(LC_NUMERIC, "");
-    if (vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
+    if ((argv[1][0] == '-' && argv[1][1] == 0) || vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
         if (!(vfs.stat(argv[2], NULL) & VFS_STAT_IS_DIRECTORY)) {
             fprintf(stderr, "Second parameter is not a directory!\n");
             return -1;

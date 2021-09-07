@@ -127,7 +127,7 @@ int unix_vfs_rename(const char *old_path, const char *new_path) {
 int unix_vfs_stat(const char *path, int32_t *size) {
     struct stat s;
     if (stat(path, &s) != 0) {
-        *size = 0;
+        if (size) *size = 0;
         return 0;
     }
     if (size) *size = s.st_size;
