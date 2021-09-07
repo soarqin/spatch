@@ -278,10 +278,92 @@ int make_add_file(const char *relpath,
     return 0;
 }
 
+int make_dir_diff(const char *relpath, const char *source_dir, const char *input_dir, struct vfs_file_handle *output_file, int compress) {
+    int ret;
+    struct vfs_dir_handle *inp_dir = vfs.opendir(input_dir, false);
+    while (vfs.readdir(inp_dir)) {
+        const char *dir_name = vfs.dirent_get_name(inp_dir);
+        if (dir_name[0] == '.') {
+            continue;
+        }
+        if (vfs.dirent_is_dir(inp_dir)) {
+            char path[1024], new_source_dir[1024], new_input_dir[1024];
+            if (relpath[0] == 0) {
+                snprintf(path, 1024, "%s", dir_name);
+            } else {
+                snprintf(path, 1024, "%s/%s", relpath, dir_name);
+            }
+            if (source_dir[0] == 0) {
+                snprintf(new_source_dir, 1024, "%s", dir_name);
+            } else {
+                snprintf(new_source_dir, 1024, "%s/%s", source_dir, dir_name);
+            }
+            if (input_dir[0] == 0) {
+                snprintf(new_input_dir, 1024, "%s", dir_name);
+            } else {
+                snprintf(new_input_dir, 1024, "%s/%s", input_dir, dir_name);
+            }
+            ret = make_dir_diff(path, new_source_dir, new_input_dir, output_file, compress);
+            if (ret != 0) {
+                return ret;
+            }
+        } else {
+            char path[1024], source_file[1024], input_file[1024];
+            struct vfs_file_handle *fsrc, *finp;
+            if (relpath[0] == 0) {
+                snprintf(path, 1024, "%s", dir_name);
+            } else {
+                snprintf(path, 1024, "%s/%s", relpath, dir_name);
+            }
+            if (source_dir[0] == 0) {
+                snprintf(source_file, 1024, "%s", dir_name);
+            } else {
+                snprintf(source_file, 1024, "%s/%s", source_dir, dir_name);
+            }
+            if (input_dir[0] == 0) {
+                snprintf(input_file, 1024, "%s", dir_name);
+            } else {
+                snprintf(input_file, 1024, "%s/%s", input_dir, dir_name);
+            }
+            finp = vfs.open(input_file, VFS_FILE_ACCESS_READ, 0);
+            if (!finp) {
+                return -1;
+            }
+            fsrc = vfs.open(source_file, VFS_FILE_ACCESS_READ, 0);
+            if (fsrc) {
+                ret = make_diff(path, fsrc, finp, output_file, compress);
+                vfs.close(fsrc);
+            } else {
+                ret = make_add_file(path, finp, output_file, compress);
+            }
+            vfs.close(finp);
+            if (ret != 0) {
+                return ret;
+            }
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
     int ret;
+    int compress = argc > 4 && argv[4][0] != '0';
     setlocale(LC_NUMERIC, "");
+    if (vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
+        if (!(vfs.stat(argv[2], NULL) & VFS_STAT_IS_DIRECTORY)) {
+            fprintf(stderr, "Second parameter is not a directory!\n");
+            return -1;
+        }
+        output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
+        if (!output_file) {
+            fprintf(stderr, "Unable to write output file!\n");
+            goto end;
+        }
+        ret = make_dir_diff("", argv[1], argv[2], output_file, compress);
+        vfs.close(output_file);
+        return ret;
+    }
     source_file = (argv[1][0] == '-' && argv[1][1] == 0) ? NULL : vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
     input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
     if (!input_file) {
@@ -294,9 +376,9 @@ int main(int argc, char *argv[]) {
         goto end;
     }
     if (source_file) {
-        ret = make_diff(argv[1], source_file, input_file, output_file, argc > 4 && argv[4][0] != '0');
+        ret = make_diff(argv[1], source_file, input_file, output_file, compress);
     } else {
-        ret = make_add_file(argv[2], input_file, output_file, argc > 4 && argv[4][0] != '0');
+        ret = make_add_file(argv[2], input_file, output_file, compress);
     }
 
 end:
