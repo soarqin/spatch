@@ -1,5 +1,6 @@
 add_subdirectory(lzma)
 add_subdirectory(xdelta)
+add_subdirectory(nuklear)
 add_subdirectory(common)
 add_subdirectory(sdiffer)
 add_subdirectory(spatcher)

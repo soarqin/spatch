@@ -420,31 +420,8 @@ int main(int argc, char *argv[]) {
     uint32_t org_tail_offset = 0;
 #endif
     setlocale(LC_NUMERIC, "");
-    if ((argv[1][0] == '-' && argv[1][1] == 0) || vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
-        if (!(vfs.stat(argv[2], NULL) & VFS_STAT_IS_DIRECTORY)) {
-            fprintf(stderr, "Second parameter is not a directory!\n");
-            return -1;
-        }
-        output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
-        if (!output_file) {
-            fprintf(stderr, "Unable to write output file!\n");
-            goto end;
-        }
-        ret = make_dir_diff("", argv[1], argv[2], output_file, compress);
-        if (ret == 0) {
-            ret = make_dir_deletes("", argv[1], argv[2], output_file);
-        }
-        vfs.close(output_file);
-        return ret;
-    }
-    source_file = (argv[1][0] == '-' && argv[1][1] == 0) ? NULL : vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
-    input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
-    if (!input_file) {
-        fprintf(stderr, "Unable to read from input file!\n");
-        goto end;
-    }
 #if defined(_WIN32)
-    util_copy_file("spatcher.exe", argv[3]);
+    util_copy_file("spatcher_header_win32.exe", argv[3]);
     output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE | VFS_FILE_ACCESS_UPDATE_EXISTING, 0);
 #else
     output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
@@ -457,6 +434,23 @@ int main(int argc, char *argv[]) {
     vfs.seek(output_file, 0, VFS_SEEK_POSITION_END);
     org_tail_offset = vfs.tell(output_file);
 #endif
+    if ((argv[1][0] == '-' && argv[1][1] == 0) || vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
+        if (!(vfs.stat(argv[2], NULL) & VFS_STAT_IS_DIRECTORY)) {
+            fprintf(stderr, "Second parameter is not a directory!\n");
+            return -1;
+        }
+        ret = make_dir_diff("", argv[1], argv[2], output_file, compress);
+        if (ret == 0) {
+            ret = make_dir_deletes("", argv[1], argv[2], output_file);
+        }
+        goto end;
+    }
+    source_file = (argv[1][0] == '-' && argv[1][1] == 0) ? NULL : vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
+    input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
+    if (!input_file) {
+        fprintf(stderr, "Unable to read from input file!\n");
+        goto end;
+    }
     if (source_file) {
         ret = make_diff(argv[1], source_file, input_file, output_file, compress);
     } else {
