@@ -25,7 +25,7 @@ static int sp_getblk(xd3_stream *stream, xd3_source *source, xoff_t blkno) {
     return 0;
 }
 
-static int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, const char *output_path, int is_dir) {
+static int do_single_patch(struct vfs_file_handle *input_file, int64_t *bytes_left, const char *src_path, const char *output_path, int is_dir) {
     int ret = -1;
     void *data = NULL;
     void *blkdata = NULL;
@@ -46,15 +46,18 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         ret = -2;
         goto end;
     }
+    *bytes_left -= 2;
     if (vfs.read(input_file, name, namelen) < namelen) {
         ret = -2;
         goto end;
     }
+    *bytes_left -= namelen;
     name[namelen] = 0;
     if (vfs.read(input_file, &type, 1) < 1) {
         ret = -2;
         goto end;
     }
+    *bytes_left -= 1;
     if (type < 2) {
         if (is_dir) {
             if (src_path && src_path[0] != 0) {
@@ -137,6 +140,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         ret = -2;
         goto end;
     }
+    *bytes_left -= sizeof(uint32_t);
     if (type == 2 || type == 3) {
         if (type == 2) {
             int64_t left = inp_size;
@@ -146,6 +150,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
                 if (bytes <= 0) {
                     break;
                 }
+                *bytes_left -= bytes;
                 vfs.write(fout, buf, bytes);
                 left -= bytes;
             }
@@ -160,6 +165,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
             vfs.read(input_file, &output_size, sizeof(uint32_t));
             fprintf(stdout, "Original size: %'u\n", output_size);
             vfs.read(input_file, props, LZMA_PROPS_SIZE);
+            *bytes_left -= LZMA_PROPS_SIZE + sizeof(uint32_t);
             left -= LZMA_PROPS_SIZE + sizeof(uint32_t);
             LzmaDec_Construct(&dec);
             LzmaDec_Allocate(&dec, props, LZMA_PROPS_SIZE, &my_alloc);
@@ -185,6 +191,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
                     }
                     vfs.write(fout, buf_out, sz_output);
                 }
+                *bytes_left -= bytes;
                 left -= bytes;
             }
             if (status != LZMA_STATUS_FINISHED_WITH_MARK) {
@@ -209,6 +216,7 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         ret = -2;
         goto end;
     }
+    *bytes_left -= inp_size;
 
     src_size = vfs.size(fsrc);
 
@@ -308,9 +316,9 @@ end:
     return ret;
 }
 
-int do_multi_patch(const char *src_path, struct vfs_file_handle *input_file, const char *output_path) {
-    while (1) {
-        int ret = do_single_patch(input_file, src_path, output_path, 1);
+int do_multi_patch(const char *src_path, struct vfs_file_handle *input_file, int64_t bytes_left, const char *output_path) {
+    while (bytes_left > 0) {
+        int ret = do_single_patch(input_file, &bytes_left, src_path, output_path, 1);
         if (ret != 0) {
             if (ret == -2) {
                 break;
@@ -327,12 +335,13 @@ int main(int argc, char *argv[]) {
     int is_dir = 0;
     struct vfs_file_handle *input_file = NULL;
     int ret;
+    int64_t bytes_left = 0;
     setlocale(LC_NUMERIC, "");
     switch (argc) {
     case 2:
 #if defined(_WIN32)
     {
-        if (browse_for_directory("Choose folder:", browsed_selected_path, 1024) != 0) {
+        if (browse_for_directory(NULL, browsed_selected_path, 1024) != 0) {
             ret = -1;
             goto end;
         }
@@ -369,10 +378,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unable to open input file!\n");
         goto end;
     }
+    bytes_left = vfs.size(input_file);
     if (is_dir) {
-        ret = do_multi_patch(src_path, input_file, output_path);
+        ret = do_multi_patch(src_path, input_file, bytes_left, output_path);
     } else {
-        ret = do_single_patch(input_file, src_path, output_path, is_dir);
+        ret = do_single_patch(input_file, &bytes_left, src_path, output_path, is_dir);
     }
 
 end:

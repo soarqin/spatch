@@ -37,6 +37,11 @@ int browse_for_directory(const char *prompt, char *output, size_t len) {
         ILFree(iil);
     }
     pFileOpen->lpVtbl->SetOptions(pFileOpen, FOS_PICKFOLDERS);
+    if (prompt) {
+        WCHAR promptw[1024];
+        util_utf8_to_ucs(prompt, promptw, 1024);
+        pFileOpen->lpVtbl->SetTitle(pFileOpen, promptw);
+    }
     hr = pFileOpen->lpVtbl->Show(pFileOpen, NULL);
 
     if (SUCCEEDED(hr))

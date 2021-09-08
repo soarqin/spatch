@@ -12,3 +12,4 @@ extern int util_mkdir_unicode(const wchar_t *wpath, int recursive);
 
 extern int util_mkdir(const char *path, int recursive);
 extern int util_file_exists(const char *path);
+extern int util_copy_file(const char *source, const char *target);

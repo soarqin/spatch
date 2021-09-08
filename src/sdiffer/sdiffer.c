@@ -414,8 +414,11 @@ int make_dir_deletes(const char *relpath, const char *source_dir, const char *in
 
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
-    int ret;
+    int ret = -1;
     int compress = argc > 4 && argv[4][0] != '0';
+#if defined(_WIN32)
+    uint32_t org_tail_offset = 0;
+#endif
     setlocale(LC_NUMERIC, "");
     if ((argv[1][0] == '-' && argv[1][1] == 0) || vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
         if (!(vfs.stat(argv[2], NULL) & VFS_STAT_IS_DIRECTORY)) {
@@ -428,7 +431,9 @@ int main(int argc, char *argv[]) {
             goto end;
         }
         ret = make_dir_diff("", argv[1], argv[2], output_file, compress);
-        ret = make_dir_deletes("", argv[1], argv[2], output_file);
+        if (ret == 0) {
+            ret = make_dir_deletes("", argv[1], argv[2], output_file);
+        }
         vfs.close(output_file);
         return ret;
     }
@@ -438,11 +443,20 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "Unable to read from input file!\n");
         goto end;
     }
+#if defined(_WIN32)
+    util_copy_file("spatcher.exe", argv[3]);
+    output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE | VFS_FILE_ACCESS_UPDATE_EXISTING, 0);
+#else
     output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
+#endif
     if (!output_file) {
         fprintf(stderr, "Unable to write output file!\n");
         goto end;
     }
+#if defined(_WIN32)
+    vfs.seek(output_file, 0, VFS_SEEK_POSITION_END);
+    org_tail_offset = vfs.tell(output_file);
+#endif
     if (source_file) {
         ret = make_diff(argv[1], source_file, input_file, output_file, compress);
     } else {
@@ -450,6 +464,11 @@ int main(int argc, char *argv[]) {
     }
 
 end:
+    if (ret == 0) {
+        uint64_t tag = 0xBADC0DEDEADBEEFULL;
+        vfs.write(output_file, &org_tail_offset, sizeof(uint32_t));
+        vfs.write(output_file, &tag, sizeof(uint64_t));
+    }
     if (output_file) vfs.close(output_file);
     if (input_file) vfs.close(input_file);
     if (source_file) vfs.close(source_file);

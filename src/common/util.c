@@ -1,5 +1,7 @@
 #include "util.h"
 
+#include "vfs.h"
+
 #if defined(VFS_WIN32)
 #include <windows.h>
 #include <shlwapi.h>
@@ -76,4 +78,30 @@ int util_file_exists(const char *path) {
 #if defined(VFS_UNIX)
     return access(path, F_OK) != -1;
 #endif
+}
+
+extern int util_copy_file(const char *source, const char *target) {
+    int ret = 0;
+    struct vfs_file_handle *src_file = vfs.open(source, VFS_FILE_ACCESS_READ, 0);
+    struct vfs_file_handle *tgt_file;
+    if (!src_file) { return -1; }
+    tgt_file = vfs.open(target, VFS_FILE_ACCESS_WRITE, 0);
+    if (!tgt_file) { vfs.close(src_file); return -1; }
+    while (1) {
+        char buf[256 * 1024];
+        int64_t bytes = vfs.read(src_file, buf, 256 * 1024);
+        if (bytes <= 0) {
+            break;
+        }
+        if (vfs.write(tgt_file, buf, bytes) < bytes) {
+            ret = -1;
+            break;
+        }
+        if (bytes < 256 * 1024) {
+            break;
+        }
+    }
+    vfs.close(tgt_file);
+    vfs.close(src_file);
+    return ret;
 }
