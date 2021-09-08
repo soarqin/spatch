@@ -2,6 +2,7 @@
 #include "LzmaDec.h"
 
 #include "vfs.h"
+#include "selector.h"
 
 #include <stdint.h>
 #include <locale.h>
@@ -32,13 +33,15 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
     uint8_t *inp = NULL;
     size_t src_size = 0, inp_size = 0;
     usize_t n = 0, ipos = 0;
-    xd3_source source = {};
-    xd3_stream stream = {};
-    xd3_config config = {};
+    xd3_source source = {0};
+    xd3_stream stream = {0};
+    xd3_config config = {0};
     struct vfs_file_handle *fsrc = NULL, *fout = NULL;
     uint16_t namelen = 0;
     uint8_t type = 0;
     char name[1024];
+    char bakpath[1024] = {0};
+    char outpath[1024] = {0};
     if (vfs.read(input_file, &namelen, 2) < 2) {
         ret = -2;
         goto end;
@@ -55,11 +58,18 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
     if (type < 2) {
         if (is_dir) {
             if (src_path && src_path[0] != 0) {
-                char path[1024];
-                snprintf(path, 1024, "%s/%s", src_path, name);
-                fsrc = vfs.open(path, VFS_FILE_ACCESS_READ, 0);
+                snprintf(outpath, 1024, "%s/%s", src_path, name);
+                fsrc = vfs.open(outpath, VFS_FILE_ACCESS_READ, 0);
             } else {
-                fsrc = vfs.open(name, VFS_FILE_ACCESS_READ, 0);
+                int i;
+                snprintf(outpath, 1024, "%s/%s", output_path, name);
+                for (i = 0; i < 999; ++i) {
+                    snprintf(bakpath, 1024, "%s/%s.sbk.%d", output_path, name, i);
+                    if (vfs.rename(outpath, bakpath) == 0) {
+                        break;
+                    }
+                }
+                fsrc = vfs.open(bakpath, VFS_FILE_ACCESS_READ, 0);
             }
         } else {
             fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
@@ -77,6 +87,11 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         ;
         vfs.mkdir(output_path);
         snprintf(path, 1024, "%s/%s", output_path, name);
+        if (type == 4) {
+            fprintf(stdout, "Delete file: %s\n", path);
+            ret = vfs.remove(path);
+            goto end;
+        }
         fprintf(stdout, "Target file path: %s\n", path);
         rslash = strrchr(path, '/');
 #if defined(_WIN32)
@@ -95,6 +110,11 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
         , *rslash2
 #endif
         ;
+        if (type == 4) {
+            fprintf(stdout, "Delete file: %s\n", output_path);
+            ret = vfs.remove(output_path);
+            goto end;
+        }
         fprintf(stdout, "Target file path: %s\n", output_path);
         rslash = strrchr(output_path, '/');
 #if defined(_WIN32)
@@ -107,6 +127,11 @@ static int do_single_patch(struct vfs_file_handle *input_file, const char *src_p
             *rslash = '/';
         }
         fout = vfs.open(output_path, VFS_FILE_ACCESS_WRITE, 0);
+    }
+    if (!fout) {
+        fprintf(stderr, "Unable to write output file!\n");
+        ret = -1;
+        goto end;
     }
     if (vfs.read(input_file, &inp_size, sizeof(uint32_t)) < sizeof(uint32_t)) {
         ret = -2;
@@ -271,6 +296,14 @@ end:
     if (inp) free(inp);
     if (blkdata) free(blkdata);
     if (data) free(data);
+    if (bakpath[0] != 0) {
+        if (ret == 0 || outpath[0] == 0) {
+            vfs.remove(bakpath);
+        } else {
+            vfs.remove(outpath);
+            vfs.rename(bakpath, outpath);
+        }
+    }
 
     return ret;
 }
@@ -290,21 +323,46 @@ int do_multi_patch(const char *src_path, struct vfs_file_handle *input_file, con
 
 int main(int argc, char *argv[]) {
     const char *src_path = NULL, *input_path = NULL, *output_path = NULL;
+    char browsed_selected_path[1024];
     int is_dir = 0;
     struct vfs_file_handle *input_file = NULL;
     int ret;
     setlocale(LC_NUMERIC, "");
-    if (argc > 3) {
-        src_path = argv[1];
-        if ((src_path[0] != '-' || src_path[1] != 0) && vfs.stat(src_path, NULL) & VFS_STAT_IS_DIRECTORY) {
-            is_dir = 1;
+    switch (argc) {
+    case 2:
+#if defined(_WIN32)
+    {
+        if (browse_for_directory("Choose folder:", browsed_selected_path, 1024) != 0) {
+            ret = -1;
+            goto end;
         }
-        input_path = argv[2];
-        output_path = argv[3];
-    } else {
+        output_path = browsed_selected_path;
+        input_path = argv[1];
+        is_dir = 1;
+        break;
+    }
+#endif
+    case 0:
+    case 1:
+        fprintf(stdout, "Usage: spatcher [source dir/file] <patch file> <target_dir>\n");
+        ret = -1;
+        goto end;
+    case 3: {
         input_path = argv[1];
         output_path = argv[2];
         is_dir = 1;
+        break;
+    }
+    default:
+        {
+            src_path = argv[1];
+            if ((src_path[0] != '-' || src_path[1] != 0) && vfs.stat(src_path, NULL) & VFS_STAT_IS_DIRECTORY) {
+                is_dir = 1;
+            }
+            input_path = argv[2];
+            output_path = argv[3];
+            break;
+        }
     }
     input_file = vfs.open(input_path, VFS_FILE_ACCESS_READ, 0);
     if (!input_file) {

@@ -3,6 +3,7 @@
 #include "LzmaEnc.h"
 
 #include "vfs.h"
+#include "util.h"
 #include "memstream.h"
 
 #include <stdlib.h>
@@ -17,6 +18,7 @@ enum {
     DIFF_TYPE_CHANGE_LZMA = 1,
     DIFF_TYPE_ADD_OR_REPLACE = 2,
     DIFF_TYPE_ADD_OR_REPLACE_LZMA = 3,
+    DIFF_TYPE_DELETE = 4,
 };
 
 typedef struct seq_in_file_s {
@@ -69,7 +71,7 @@ static int do_stream_compress(ISeqInStream *stm_in, size_t input_size, seq_out_f
     uint64_t file_offset, file_offset2;
     int i;
     SRes res;
-    uint8_t header[LZMA_PROPS_SIZE + 8] = {};
+    uint8_t header[LZMA_PROPS_SIZE + 8] = {0};
     size_t header_size = LZMA_PROPS_SIZE;
     compress_progress_t progress;
 
@@ -118,9 +120,9 @@ static int make_diff(const char *relpath,
     uint8_t *src = NULL, *inp = NULL;
     size_t src_size = 0, inp_size = 0;
     usize_t n = 0, ipos = 0;
-    xd3_source source = {};
-    xd3_stream stream = {};
-    xd3_config config = {};
+    xd3_source source = {0};
+    xd3_stream stream = {0};
+    xd3_config config = {0};
 
     src_size = vfs.size(source_file);
     src = malloc(src_size);
@@ -211,7 +213,7 @@ end:
         seq_out_file_t stm_out;
 
         uint32_t size = memstream_size(stm);
-        uint8_t type = 1;
+        uint8_t type = DIFF_TYPE_CHANGE_LZMA;
         vfs.write(output_file, &type, 1);
 
         stm_in.stream.Read = stream_read;
@@ -222,7 +224,7 @@ end:
     } else {
         uint32_t size = memstream_size(stm);
 
-        uint8_t type = 0;
+        uint8_t type = DIFF_TYPE_CHANGE;
         vfs.write(output_file, &type, 1);
         vfs.write(output_file, &size, sizeof(uint32_t));
         while (1) {
@@ -254,7 +256,7 @@ int make_add_file(const char *relpath,
         seq_out_file_t stm_out;
 
         uint32_t size = vfs.size(input_file);
-        uint8_t type = 3;
+        uint8_t type = DIFF_TYPE_ADD_OR_REPLACE_LZMA;
         vfs.write(output_file, &type, 1);
 
         stm_in.stream.Read = file_read;
@@ -265,7 +267,7 @@ int make_add_file(const char *relpath,
     } else {
         uint32_t size = vfs.size(input_file);
 
-        uint8_t type = 2;
+        uint8_t type = DIFF_TYPE_ADD_OR_REPLACE;
         vfs.write(output_file, &type, 1);
         vfs.write(output_file, &size, sizeof(uint32_t));
         while (1) {
@@ -285,6 +287,9 @@ int make_add_file(const char *relpath,
 int make_dir_diff(const char *relpath, const char *source_dir, const char *input_dir, struct vfs_file_handle *output_file, int compress) {
     int ret;
     struct vfs_dir_handle *inp_dir = vfs.opendir(input_dir, false);
+    if (!inp_dir) {
+        return 0;
+    }
     while (vfs.readdir(inp_dir)) {
         char path[1024], source_path[1024], input_path[1024];
         const char *dir_name = vfs.dirent_get_name(inp_dir);
@@ -348,6 +353,65 @@ int make_dir_diff(const char *relpath, const char *source_dir, const char *input
     return 0;
 }
 
+int make_dir_deletes(const char *relpath, const char *source_dir, const char *input_dir, struct vfs_file_handle *output_file) {
+    int ret = 0;
+    struct vfs_dir_handle *src_dir = vfs.opendir(source_dir, false);
+    if (!src_dir) {
+        return 0;
+    }
+    while (vfs.readdir(src_dir)) {
+        char path[1024], source_path[1024], input_path[1024];
+        const char *dir_name = vfs.dirent_get_name(src_dir);
+        if (dir_name[0] == '.') {
+            continue;
+        }
+        if (vfs.dirent_is_dir(src_dir)) {
+            if (relpath[0] == 0) {
+                snprintf(path, 1024, "%s", dir_name);
+            } else {
+                snprintf(path, 1024, "%s/%s", relpath, dir_name);
+            }
+            if (source_dir[0] == 0) {
+                snprintf(source_path, 1024, "%s", dir_name);
+            } else {
+                snprintf(source_path, 1024, "%s/%s", source_dir, dir_name);
+            }
+            if (input_dir[0] == 0) {
+                snprintf(input_path, 1024, "%s", dir_name);
+            } else {
+                snprintf(input_path, 1024, "%s/%s", input_dir, dir_name);
+            }
+            ret = make_dir_deletes(path, source_path, input_path, output_file);
+            if (ret != 0) {
+                return ret;
+            }
+        } else {
+            struct vfs_file_handle *fsrc, *finp;
+            if (input_dir[0] == 0) {
+                snprintf(input_path, 1024, "%s", dir_name);
+            } else {
+                snprintf(input_path, 1024, "%s/%s", input_dir, dir_name);
+            }
+            if (util_file_exists(input_path)) {
+                continue;
+            }
+            if (relpath[0] == 0) {
+                snprintf(path, 1024, "%s", dir_name);
+            } else {
+                snprintf(path, 1024, "%s/%s", relpath, dir_name);
+            }
+            fprintf(stdout, "  Delete file:  %s\n", path);
+            {
+                uint16_t namelen = strlen(path);
+                uint8_t type = DIFF_TYPE_DELETE;
+                vfs.write(output_file, &namelen, 2);
+                vfs.write(output_file, path, namelen);
+                vfs.write(output_file, &type, 1);
+            }
+        }
+    }
+}
+
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
     int ret;
@@ -364,6 +428,7 @@ int main(int argc, char *argv[]) {
             goto end;
         }
         ret = make_dir_diff("", argv[1], argv[2], output_file, compress);
+        ret = make_dir_deletes("", argv[1], argv[2], output_file);
         vfs.close(output_file);
         return ret;
     }

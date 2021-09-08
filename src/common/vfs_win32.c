@@ -23,14 +23,6 @@ struct vfs_dir_handle {
     bool next;
 };
 
-static bool FileNameUCSToUTF8(const wchar_t *filenamew, char filename[MAX_PATH * 3 + 1]) {
-    return WideCharToMultiByte(CP_UTF8, 0, filenamew, -1, filename, MAX_PATH * 3 + 1, NULL, 0) > 0;
-}
-
-static bool FileNameUTF8ToUCS(const char *filename, wchar_t filenamew[MAX_PATH + 1]) {
-    return MultiByteToWideChar(CP_UTF8, 0, filename, -1, filenamew, MAX_PATH + 1) > 0;
-}
-
 const char *win32_vfs_get_path(struct vfs_file_handle *stream) {
     return stream->filename;
 }
@@ -38,7 +30,7 @@ const char *win32_vfs_get_path(struct vfs_file_handle *stream) {
 struct vfs_file_handle *win32_vfs_open(const char *path, unsigned mode, unsigned hints) {
     struct vfs_file_handle *ret = malloc(sizeof(struct vfs_file_handle));
     lstrcpynA(ret->filename, path, MAX_PATH * 3 + 1);
-    if (!FileNameUTF8ToUCS(ret->filename, ret->filenamew)) return NULL;
+    if (!util_utf8_to_ucs(ret->filename, ret->filenamew, MAX_PATH * 3 + 1)) return NULL;
     DWORD access = 0;
     DWORD share_mode = FILE_SHARE_READ|FILE_SHARE_WRITE;
     DWORD creation = 0;
@@ -151,15 +143,15 @@ int win32_vfs_flush(struct vfs_file_handle *stream) {
 
 int win32_vfs_remove(const char *path) {
     wchar_t filenamew[MAX_PATH + 1];
-    if (!FileNameUTF8ToUCS(path, filenamew)) return -1;
+    if (!util_utf8_to_ucs(path, filenamew, MAX_PATH + 1)) return -1;
     return DeleteFileW(filenamew) ? 0 : -1;
 }
 
 int win32_vfs_rename(const char *old_path, const char *new_path) {
     wchar_t old_filenamew[MAX_PATH + 1];
     wchar_t new_filenamew[MAX_PATH + 1];
-    if (!FileNameUTF8ToUCS(old_path, old_filenamew)) return -1;
-    if (!FileNameUTF8ToUCS(new_path, new_filenamew)) return -1;
+    if (!util_utf8_to_ucs(old_path, old_filenamew, MAX_PATH + 1)) return -1;
+    if (!util_utf8_to_ucs(new_path, new_filenamew, MAX_PATH + 1)) return -1;
     return MoveFileW(old_filenamew, new_filenamew) ? 0 : -1;
 }
 
@@ -172,7 +164,7 @@ int win32_vfs_rename(const char *old_path, const char *new_path) {
 
 int win32_vfs_stat(const char *path, int32_t *size) {
     wchar_t filenamew[MAX_PATH + 1];
-    if (!FileNameUTF8ToUCS(path, filenamew)) return 0;
+    if (!util_utf8_to_ucs(path, filenamew, MAX_PATH + 1)) return 0;
     struct _stat s;
     if (_wstat(filenamew, &s) != 0) {
         if (size) *size = 0;
@@ -188,7 +180,7 @@ int win32_vfs_mkdir(const char *dir) {
 
 struct vfs_dir_handle *win32_vfs_opendir(const char *dir, bool include_hidden) {
     wchar_t dirnamew[MAX_PATH + 1];
-    if (!FileNameUTF8ToUCS(dir, dirnamew)) return NULL;
+    if (!util_utf8_to_ucs(dir, dirnamew, MAX_PATH + 1)) return NULL;
     struct vfs_dir_handle *handle = malloc(sizeof(struct vfs_dir_handle));
     PathAppendW(dirnamew, L"*");
     memset(&handle->find_data, 0, sizeof(handle->find_data));
@@ -216,7 +208,7 @@ bool win32_vfs_readdir(struct vfs_dir_handle *dirstream) {
 
 const char *win32_vfs_dirent_get_name(struct vfs_dir_handle *dirstream) {
     static char name[MAX_PATH * 3 + 1];
-    if (!FileNameUCSToUTF8(dirstream->find_data.cFileName, name)) return NULL;
+    if (!util_ucs_to_utf8(dirstream->find_data.cFileName, name, MAX_PATH * 3 + 1)) return NULL;
     return name;
 }
 

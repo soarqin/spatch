@@ -12,7 +12,15 @@
 #endif
 #endif
 
-#if defined(VFS_WIN32)
+#if defined(_WIN32)
+int util_ucs_to_utf8(const wchar_t *strw, char *str, size_t size) {
+    return WideCharToMultiByte(CP_UTF8, 0, strw, -1, str, size, NULL, 0) > 0;
+}
+
+int util_utf8_to_ucs(const char *str, wchar_t *strw, size_t size) {
+    return MultiByteToWideChar(CP_UTF8, 0, str, -1, strw, size) > 0;
+}
+
 int util_mkdir_unicode(const wchar_t *wpath, int recursive) {
     if (recursive) {
         wchar_t n[MAX_PATH];
