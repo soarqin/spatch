@@ -425,25 +425,21 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
             int index = -1;
             size_t i = 0;
             size_t count = browser->dir_count + browser->file_count;
-            float rt0 = 25.f / total_space.w;
-            const float rt[4] = {rt0, 0.5f - rt0, rt0, NK_UNDEFINED};
 
             old_flags = ctx->style.button.text_alignment;
             ctx->style.button.text_alignment = NK_TEXT_LEFT;
-            nk_layout_row(ctx, NK_DYNAMIC, 25.f, 4, rt);
+            nk_layout_row_dynamic(ctx, 25.f, 3);
             for (i = 0; i < count; ++i) {
                 if (i < browser->dir_count) {
                     /* draw and execute directory buttons */
-                    nk_image(ctx, media->icons.directory);
-                    if (nk_button_label(ctx, browser->directories[i]))
+                    if (nk_button_image_label(ctx, media->icons.directory, browser->directories[i], 0))
                         index = (int)i;
                 } else {
                     /* draw and execute files buttons */
                     struct nk_image *icon;
                     size_t fileIndex = ((size_t)i - browser->dir_count);
                     icon = media_icon_for_file(media, browser->files[fileIndex]);
-                    nk_image(ctx, *icon);
-                    if (nk_button_label(ctx, browser->files[fileIndex])) {
+                    if (nk_button_image_label(ctx, *icon, browser->files[fileIndex], 0)) {
                         size_t n;
                         strncpy(browser->file, browser->directory, MAX_PATH_LEN);
                         n = strlen(browser->file);
@@ -524,7 +520,7 @@ int run_gui() {
     /*set_style(ctx, THEME_WHITE);*/
     /*set_style(ctx, THEME_RED);*/
     /*set_style(ctx, THEME_BLUE);*/
-    set_style(ctx, THEME_DARK);
+    /*set_style(ctx, THEME_DARK);*/
 
     media.icons.home = nk_gdip_load_image_from_rcdata(1006);
     media.icons.directory = nk_gdip_load_image_from_rcdata(1004);
