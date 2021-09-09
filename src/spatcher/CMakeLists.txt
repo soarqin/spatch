@@ -1,12 +1,15 @@
 if(WIN32)
     set(RES_FILES spatcher.rc spatcher.ico)
 endif()
-add_executable(spatcher spatcher.c
-    patch.c patch.h
-    selector.c selector.h)
-add_executable(spatcher_header_win32 WIN32 spatcher_header_win32.c
+add_executable(spatcher
     patch.c patch.h
     selector.c selector.h
+    spatcher.c)
+add_executable(spatcher_header_win32 WIN32
+    patch.c patch.h
+    selector.c selector.h
+    gui_win32.c gui_win32.h
+    spatcher_header_win32.c
     ${RES_FILES})
 target_link_libraries(spatcher xdelta3_dec lzma_dec common)
 target_link_libraries(spatcher_header_win32 xdelta3_dec lzma_dec common nuklear)

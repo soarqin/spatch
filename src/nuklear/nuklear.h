@@ -23934,7 +23934,7 @@ nk_draw_button_text_image(struct nk_command_buffer *out,
     else text.text = style->text_normal;
 
     text.padding = nk_vec2(0,0);
-    nk_widget_text(out, *label, str, len, &text, NK_TEXT_CENTERED, font);
+    nk_widget_text(out, *label, str, len, &text, style->text_alignment, font);
     nk_draw_image(out, *image, img, nk_white);
 }
 NK_LIB nk_bool
@@ -23961,7 +23961,10 @@ nk_do_button_text_image(nk_flags *state,
     if (align & NK_TEXT_ALIGN_LEFT) {
         icon.x = (bounds.x + bounds.w) - (2 * style->padding.x + icon.w);
         icon.x = NK_MAX(icon.x, 0);
-    } else icon.x = bounds.x + 2 * style->padding.x;
+    } else {
+        icon.x = bounds.x + style->padding.x;
+        content.x += icon.w + style->padding.x * 2;
+    }
 
     icon.x += style->image_padding.x;
     icon.y += style->image_padding.y;

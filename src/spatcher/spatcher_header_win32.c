@@ -8,27 +8,15 @@
 #include "vfs.h"
 #include "util.h"
 
-#define NK_INCLUDE_FIXED_TYPES
-#define NK_INCLUDE_STANDARD_IO
-#define NK_INCLUDE_STANDARD_VARARGS
-#define NK_INCLUDE_DEFAULT_ALLOCATOR
-#define NK_INCLUDE_VERTEX_BUFFER_OUTPUT
-#define NK_INCLUDE_FONT_BAKING
-#define NK_INCLUDE_DEFAULT_FONT
-#define NK_IMPLEMENTATION
-#define NK_GDIP_IMPLEMENTATION
-#define NK_KEYSTATE_BASED_INPUT
-#include <nuklear.h>
-#include <nuklear_gdip.h>
-
-#include <stdint.h>
-#include <locale.h>
+#include "gui_win32.h"
 
 #if defined(_WIN32)
 #include <windows.h>
 #endif
+#include <locale.h>
 
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
+    run_gui();
     int ret = 0;
     char browsed_selected_path[1024];
     uint32_t patch_offset = 0;

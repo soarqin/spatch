@@ -33,6 +33,7 @@ NK_API void nk_gdip_shutdown(void);
 /* image */
 NK_API struct nk_image nk_gdip_load_image_from_file(const WCHAR* filename);
 NK_API struct nk_image nk_gdip_load_image_from_memory(const void* membuf, nk_uint membufSize);
+NK_API struct nk_image nk_gdip_load_image_from_rcdata(nk_uint resource);
 NK_API void nk_gdip_image_free(struct nk_image image);
 
 #endif
@@ -644,6 +645,19 @@ nk_gdip_load_image_from_memory(const void *membuf, nk_uint membufSize)
         return nk_image_id(0);
 
     return nk_gdip_image_to_nk(image);
+}
+
+struct nk_image
+nk_gdip_load_image_from_rcdata(nk_uint resource) {
+    HRSRC res_handle = FindResource(NULL, MAKEINTRESOURCE(resource), RT_RCDATA);
+    HGLOBAL res_data;
+    struct nk_image result;
+    if (!res_handle) { return nk_image_id(0); }
+    res_data = LoadResource(NULL, res_handle);
+    result = nk_gdip_load_image_from_memory(LockResource(res_data), SizeofResource(NULL, res_handle));
+    UnlockResource(res_data);
+    FreeResource(res_data);
+    return result;
 }
 
 void

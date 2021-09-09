@@ -1,3 +1,14 @@
 #include <winres.h>
 
 IDI_APPICON ICON "spatcher.ico"
+
+1001 RCDATA "icons/computer.png"
+1002 RCDATA "icons/default.png"
+1003 RCDATA "icons/desktop.png"
+1004 RCDATA "icons/directory.png"
+1005 RCDATA "icons/font.png"
+1006 RCDATA "icons/home.png"
+1007 RCDATA "icons/img.png"
+1008 RCDATA "icons/movie.png"
+1009 RCDATA "icons/music.png"
+1010 RCDATA "icons/text.png"
