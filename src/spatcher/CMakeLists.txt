@@ -3,7 +3,6 @@ if(WIN32)
 endif()
 add_executable(spatcher
     patch.c patch.h
-    selector.c selector.h
     spatcher.c)
 add_executable(spatcher_header_win32 WIN32
     patch.c patch.h
