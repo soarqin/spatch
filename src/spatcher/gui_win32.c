@@ -1,6 +1,7 @@
 #include "gui_win32.h"
 
 #include "vfs.h"
+#include "whereami.h"
 
 #define NK_INCLUDE_FIXED_TYPES
 #define NK_INCLUDE_STANDARD_IO
@@ -160,6 +161,43 @@ dir_list(const char *dir, int return_subdirs, size_t *count) {
 
     assert(dir);
     assert(count);
+
+#if defined(_WIN32)
+    if (dir[0] == '/' && dir[1] == 0) {
+        if (return_subdirs) {DWORD flag = 4;
+            DWORD mask = GetLogicalDrives();
+            size_t i;
+            for (i = 2; i < 26; ++i, flag <<= 1) {
+                if (mask & flag) {
+                    char *p;
+                    if (!size) {
+                        results = (char **)calloc(sizeof(char *), capacity);
+                    } else if (size >= capacity) {
+                        void *old = results;
+                        capacity = capacity * 2;
+                        results = (char **)realloc(results, capacity * sizeof(char *));
+                        assert(results);
+                        if (!results) {
+                            free(old);
+                            size = 0;
+                        }
+                    }
+                    p = malloc(4);
+                    p[0] = (char)('A' + i);
+                    p[1] = ':';
+                    p[2] = 0;
+                    results[size++] = p;
+                }
+            }
+            if (count) *count = size;
+            return results;
+        } else {
+            if (count) *count = 0;
+            return NULL;
+        }
+    }
+#endif
+
     strncpy(buffer, dir, MAX_PATH_LEN);
     n = strlen(buffer);
 
@@ -298,7 +336,7 @@ file_browser_reload_directory_content(struct file_browser *browser, const char *
 }
 
 static void
-file_browser_init(struct file_browser *browser, struct media *media) {
+file_browser_init(struct file_browser *browser, struct media *media, const char *init_path) {
     memset(browser, 0, sizeof(*browser));
     browser->media = media;
     {
@@ -318,7 +356,6 @@ file_browser_init(struct file_browser *browser, struct media *media) {
             strncpy(browser->home, home, MAX_PATH_LEN);
             l = strlen(browser->home);
             strcpy(browser->home + l, "/");
-            strcpy(browser->directory, browser->home);
         }
         {
             size_t l;
@@ -326,6 +363,7 @@ file_browser_init(struct file_browser *browser, struct media *media) {
             l = strlen(browser->desktop);
             strcpy(browser->desktop + l, "desktop/");
         }
+        strcpy(browser->directory, init_path ? init_path : browser->home);
         browser->files = dir_list(browser->directory, 0, &browser->file_count);
         browser->directories = dir_list(browser->directory, 1, &browser->dir_count);
     }
@@ -344,7 +382,6 @@ file_browser_free(struct file_browser *browser) {
 
 static int
 file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
-    static int fav_sel = -1;
     int ret = 0;
     struct media *media = browser->media;
     struct nk_rect total_space;
@@ -370,18 +407,20 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
         nk_layout_row(ctx, NK_DYNAMIC, 25.f, 7, rows_ratio);
         old_flags = ctx->style.combo.button.text_alignment;
         ctx->style.contextual_button.text_alignment = NK_TEXT_LEFT;
-        if (nk_combo_begin_image_label(ctx, fav_sel < 0 ? "" : comboitems[fav_sel], comboimages[fav_sel < 0 ? combo_count : fav_sel], nk_vec2(200.f, 400.f))) {
+        if (nk_combo_begin_image_label(ctx, "== QUICK NAV ===", comboimages[combo_count], nk_vec2(200.f, 400.f))) {
             int i;
             nk_layout_row_dynamic(ctx, 25.f, 1);
             for (i = 0; i < combo_count; ++i) {
                 if (nk_combo_item_image_label(ctx, comboimages[i], comboitems[i], 0)) {
-                    fav_sel = i;
                     switch (i) {
                     case 0:
                         file_browser_reload_directory_content(browser, browser->home);
                         break;
                     case 1:
                         file_browser_reload_directory_content(browser, browser->desktop);
+                        break;
+                    case 2:
+                        file_browser_reload_directory_content(browser, "/");
                         break;
                     default:
                         break;
@@ -451,6 +490,11 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
 
             if (index != -1) {
                 size_t n = strlen(browser->directory);
+#if defined(_WIN32)
+                if (n == 1 && browser->directory[0] == '/') {
+                    n = 0;
+                }
+#endif
                 strncpy(browser->directory + n, browser->directories[index], MAX_PATH_LEN - n);
                 n = strlen(browser->directory);
                 if (n < MAX_PATH_LEN - 1) {
@@ -470,10 +514,18 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
 static LRESULT CALLBACK
 WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
+    case WM_CREATE: {
+        HICON icon = LoadIcon(NULL, MAKEINTRESOURCE(1000));
+        SendMessage(wnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
+        SendMessage(wnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
+        SendMessage(wnd, WM_SETICON, ICON_SMALL2, (LPARAM)icon);
+        return 0;
+    }
     case WM_DESTROY:
         PostQuitMessage(0);
         return 0;
-    default:break;
+    default:
+        break;
     }
     if (nk_gdip_handle_event(wnd, msg, wparam, lparam))
         return 0;
@@ -494,13 +546,22 @@ int run_gui() {
 
     struct file_browser browser;
     struct media media;
+    char init_path[1024];
+    int dirname_length;
+    int scene = 0;
+
+    wai_getExecutablePath(init_path, 1024, &dirname_length);
+    init_path[dirname_length] = 0;
+    while (--dirname_length >= 0) {
+        if (init_path[dirname_length] == '\\') init_path[dirname_length] = '/';
+    }
 
     /* Win32 */
     memset(&wc, 0, sizeof(wc));
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = GetModuleHandleW(0);
-    wc.hIcon = LoadIcon(NULL, IDI_APPLICATION);
+    wc.hIcon = LoadIcon(NULL, MAKEINTRESOURCE(1000));
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.lpszClassName = L"NuklearWindowClass";
     RegisterClassW(&wc);
@@ -511,6 +572,13 @@ int run_gui() {
                           style | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
                           rect.right - rect.left, rect.bottom - rect.top,
                           NULL, NULL, wc.hInstance, NULL);
+    {
+        HMONITOR monitor = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
+        MONITORINFO mi;
+        mi.cbSize = sizeof(MONITORINFO);
+        GetMonitorInfo(monitor, &mi);
+        MoveWindow(wnd, mi.rcWork.left + mi.rcWork.right + rect.left - rect.right)
+    }
 
     /* GUI */
     ctx = nk_gdip_init(wnd, WINDOW_WIDTH, WINDOW_HEIGHT);
@@ -534,7 +602,7 @@ int run_gui() {
     media.icons.movie_file = nk_gdip_load_image_from_rcdata(1008);
     media_init(&media);
 
-    file_browser_init(&browser, &media);
+    file_browser_init(&browser, &media, init_path);
 
     while (running) {
         MSG msg;
@@ -553,7 +621,6 @@ int run_gui() {
                 running = 0;
             TranslateMessage(&msg);
             DispatchMessageW(&msg);
-            needs_refresh = 1;
         }
         nk_input_end(ctx);
         file_browser_run(&browser, ctx);

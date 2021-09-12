@@ -9,6 +9,7 @@ add_executable(spatcher_header_win32 WIN32
     selector.c selector.h
     gui_win32.c gui_win32.h
     spatcher_header_win32.c
+    whereami.c whereami.h
     ${RES_FILES})
 target_link_libraries(spatcher xdelta3_dec lzma_dec common)
 target_link_libraries(spatcher_header_win32 xdelta3_dec lzma_dec common nuklear)
