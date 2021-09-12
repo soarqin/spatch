@@ -19,7 +19,7 @@
 
 /* font */
 typedef struct GdipFont GdipFont;
-NK_API GdipFont* nk_gdipfont_create(const char *name, int size);
+NK_API GdipFont* nk_gdipfont_create(const char *name, int size, int style);
 NK_API GdipFont* nk_gdipfont_create_from_file(const WCHAR* filename, int size);
 NK_API GdipFont* nk_gdipfont_create_from_memory(const void* membuf, int membufSize, int size);
 NK_API void nk_gdipfont_del(GdipFont *font);
@@ -669,7 +669,7 @@ nk_gdip_image_free(struct nk_image image)
 }
 
 GdipFont*
-nk_gdipfont_create(const char *name, int size)
+nk_gdipfont_create(const char *name, int size, int style)
 {
     GdipFont *font = (GdipFont*)calloc(1, sizeof(GdipFont));
     GpFontFamily *family;
@@ -680,7 +680,7 @@ nk_gdipfont_create(const char *name, int size)
     wname[wsize] = 0;
 
     GdipCreateFontFamilyFromName(wname, NULL, &family);
-    GdipCreateFont(family, (REAL)size, FontStyleRegular, UnitPixel, &font->handle);
+    GdipCreateFont(family, (REAL)size, style, UnitPixel, &font->handle);
     GdipDeleteFontFamily(family);
 
     return font;

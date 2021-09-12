@@ -1,7 +1,6 @@
 #include "gui_win32.h"
 
 #include "vfs.h"
-#include "whereami.h"
 
 #define NK_INCLUDE_FIXED_TYPES
 #define NK_INCLUDE_STANDARD_IO
@@ -336,7 +335,7 @@ file_browser_reload_directory_content(struct file_browser *browser, const char *
 }
 
 static void
-file_browser_init(struct file_browser *browser, struct media *media, const char *init_path) {
+file_browser_init(struct file_browser *browser, struct media *media) {
     memset(browser, 0, sizeof(*browser));
     browser->media = media;
     {
@@ -361,11 +360,12 @@ file_browser_init(struct file_browser *browser, struct media *media, const char 
             size_t l;
             strcpy(browser->desktop, browser->home);
             l = strlen(browser->desktop);
+#ifdef _WIN32
+            strcpy(browser->desktop + l, "Desktop/");
+#else
             strcpy(browser->desktop + l, "desktop/");
+#endif
         }
-        strcpy(browser->directory, init_path ? init_path : browser->home);
-        browser->files = dir_list(browser->directory, 0, &browser->file_count);
-        browser->directories = dir_list(browser->directory, 1, &browser->dir_count);
     }
 }
 
@@ -393,21 +393,20 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
         media->icons.computer,
         {0}
     };
-
-    if (nk_begin(ctx, "File Browser", nk_rect(50, 50, WINDOW_WIDTH - 100, WINDOW_HEIGHT - 100),
-                 NK_WINDOW_BORDER | NK_WINDOW_NO_SCROLLBAR)) {
+    if (nk_begin(ctx, "File Browser", nk_rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT),
+                 NK_WINDOW_TITLE | NK_WINDOW_BORDER | NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_CLOSABLE)) {
         float spacing_x = ctx->style.window.spacing.x;
         int combo_count = sizeof(comboitems) / sizeof(const char *);
         nk_flags old_flags;
 
         total_space = nk_window_get_content_region(ctx);
-        rows_ratio[0] = 200.f / total_space.w;
+        rows_ratio[0] = 160.f / total_space.w;
 
         nk_menubar_begin(ctx);
         nk_layout_row(ctx, NK_DYNAMIC, 25.f, 7, rows_ratio);
         old_flags = ctx->style.combo.button.text_alignment;
         ctx->style.contextual_button.text_alignment = NK_TEXT_LEFT;
-        if (nk_combo_begin_image_label(ctx, "== QUICK NAV ===", comboimages[combo_count], nk_vec2(200.f, 400.f))) {
+        if (nk_combo_begin_image_label(ctx, "==NAV==", comboimages[combo_count], nk_vec2(200.f, 400.f))) {
             int i;
             nk_layout_row_dynamic(ctx, 25.f, 1);
             for (i = 0; i < combo_count; ++i) {
@@ -456,7 +455,7 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
 
         /* window layout */
         total_space = nk_window_get_content_region(ctx);
-        nk_layout_row_dynamic(ctx, total_space.h, 1);
+        nk_layout_row_dynamic(ctx, total_space.h - 40, 1);
 
         /* output directory content window */
         nk_group_begin(ctx, "Content", 0);
@@ -506,19 +505,96 @@ file_browser_run(struct file_browser *browser, struct nk_context *ctx) {
             ctx->style.button.text_alignment = old_flags;
             nk_group_end(ctx);
         }
+        nk_layout_row_dynamic(ctx, 0, 1);
+        if (nk_button_label(ctx, "Use this folder")) {
+            ret = 1;
+        }
+    } else {
+        ret = -1;
     }
     nk_end(ctx);
     return ret;
 }
 
+static int gui_main_run(struct nk_context *ctx, const char *curr_dir) {
+    int ret = 0;
+    if (nk_begin(ctx, "spatch", nk_rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT),
+                 NK_WINDOW_TITLE | NK_WINDOW_BORDER | NK_WINDOW_NO_SCROLLBAR | NK_WINDOW_CLOSABLE)) {
+        struct nk_rect total_space;
+        int len = strlen(curr_dir);
+        total_space = nk_window_get_content_region(ctx);
+        nk_layout_space_begin(ctx, NK_DYNAMIC, total_space.h, 3);
+        nk_layout_space_push(ctx, nk_rect(0.2, 0.35, 0.52, 0.09));
+        nk_edit_string(ctx, NK_EDIT_READ_ONLY | NK_EDIT_SELECTABLE, (char*)curr_dir, &len, 4096, NULL);
+        nk_layout_space_push(ctx, nk_rect(0.73, 0.35, 0.07, 0.09));
+        if (nk_button_label(ctx, "...")) {
+            ret = 1;
+        }
+        nk_layout_space_push(ctx, nk_rect(0.2, 0.45, 0.6, 0.09));
+        if (nk_button_label(ctx, "Apply Patch")) {
+            ret = 2;
+        }
+        nk_layout_space_end(ctx);
+    } else {
+        ret = -1;
+    }
+    nk_end(ctx);
+    return ret;
+}
+
+static int header_height = 0;
+static int header_caporgx = 0, header_caporgy = 0, header_capx = 0, header_capy = 0, header_cap = 0;
+
+static void update_window_header_height(struct nk_context *ctx) {
+    header_height = (int)(ctx->style.font->height + 2.0f * ctx->style.window.header.padding.y
+        + 2.0f * ctx->style.window.header.label_padding.y + .5f);
+}
+
 static LRESULT CALLBACK
 WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     switch (msg) {
+    case WM_LBUTTONDOWN: {
+        if ((lparam >> 16) < header_height && (lparam & 0xFFFF) < WINDOW_WIDTH - header_height) {
+            RECT rc;
+            POINT pt;
+            SetCapture(wnd);
+            header_cap = 1;
+            GetCursorPos(&pt);
+            header_capx = pt.x;
+            header_capy = pt.y;
+            GetWindowRect(wnd, &rc);
+            header_caporgx = rc.left;
+            header_caporgy = rc.top;
+            fflush(stdout);
+            return 0;
+        }
+        break;
+    }
+    case WM_LBUTTONUP:
+        if (header_cap) {
+            header_cap = 0;
+            ReleaseCapture();
+            return 0;
+        }
+        break;
+    case WM_MOUSEMOVE:
+        if (!header_cap) {
+            break;
+        }
+        {
+            POINT pt;
+            RECT rc;
+            GetCursorPos(&pt);
+            GetWindowRect(wnd, &rc);
+            MoveWindow(wnd, header_caporgx + pt.x - header_capx, header_caporgy + pt.y - header_capy, rc.right - rc.left, rc.bottom - rc.top, FALSE);
+            return 0;
+        }
     case WM_CREATE: {
         HICON icon = LoadIcon(NULL, MAKEINTRESOURCE(1000));
         SendMessage(wnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
         SendMessage(wnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
         SendMessage(wnd, WM_SETICON, ICON_SMALL2, (LPARAM)icon);
+        DestroyIcon(icon);
         return 0;
     }
     case WM_DESTROY:
@@ -532,29 +608,23 @@ WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     return DefWindowProcW(wnd, msg, wparam, lparam);
 }
 
-int run_gui() {
-    GdipFont *font;
+int run_gui(const char *init_path) {
+    GdipFont *font[2];
     struct nk_context *ctx;
 
     WNDCLASSW wc;
-    RECT rect = {0, 0, WINDOW_WIDTH, WINDOW_HEIGHT};
-    DWORD style = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
-    DWORD exstyle = WS_EX_APPWINDOW;
+    DWORD style = 0;
+    DWORD exstyle = 0;
     HWND wnd;
     int running = 1;
     int needs_refresh = 1;
 
     struct file_browser browser;
     struct media media;
-    char init_path[1024];
-    int dirname_length;
     int scene = 0;
+    char curr_path[512];
 
-    wai_getExecutablePath(init_path, 1024, &dirname_length);
-    init_path[dirname_length] = 0;
-    while (--dirname_length >= 0) {
-        if (init_path[dirname_length] == '\\') init_path[dirname_length] = '/';
-    }
+    snprintf(curr_path, 512, "%s", init_path);
 
     /* Win32 */
     memset(&wc, 0, sizeof(wc));
@@ -566,24 +636,29 @@ int run_gui() {
     wc.lpszClassName = L"NuklearWindowClass";
     RegisterClassW(&wc);
 
-    AdjustWindowRectEx(&rect, style, FALSE, exstyle);
-
-    wnd = CreateWindowExW(exstyle, wc.lpszClassName, L"Nuklear Demo",
-                          style | WS_VISIBLE, CW_USEDEFAULT, CW_USEDEFAULT,
-                          rect.right - rect.left, rect.bottom - rect.top,
+    wnd = CreateWindowExW(exstyle, wc.lpszClassName, L"Nuklear Demo", style,
+                          CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
                           NULL, NULL, wc.hInstance, NULL);
+    SetWindowLong(wnd, GWL_STYLE, 0);
     {
         HMONITOR monitor = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi;
         mi.cbSize = sizeof(MONITORINFO);
         GetMonitorInfo(monitor, &mi);
-        MoveWindow(wnd, mi.rcWork.left + mi.rcWork.right + rect.left - rect.right)
+        MoveWindow(wnd,
+                   (mi.rcWork.left + mi.rcWork.right - WINDOW_WIDTH) / 2,
+                   (mi.rcWork.top + mi.rcWork.bottom - WINDOW_HEIGHT) / 2,
+                   WINDOW_WIDTH, WINDOW_HEIGHT,
+                   FALSE);
     }
+    ShowWindow(wnd, SW_SHOW);
 
     /* GUI */
     ctx = nk_gdip_init(wnd, WINDOW_WIDTH, WINDOW_HEIGHT);
-    font = nk_gdipfont_create("Arial", 12);
-    nk_gdip_set_font(font);
+    font[0] = nk_gdipfont_create("Arial", 16, FontStyleBold);
+    font[1] = nk_gdipfont_create("Arial", 14, FontStyleRegular);
+    nk_gdip_set_font(font[0]);
+    update_window_header_height(ctx);
 
     /*set_style(ctx, THEME_WHITE);*/
     /*set_style(ctx, THEME_RED);*/
@@ -602,7 +677,7 @@ int run_gui() {
     media.icons.movie_file = nk_gdip_load_image_from_rcdata(1008);
     media_init(&media);
 
-    file_browser_init(&browser, &media, init_path);
+    file_browser_init(&browser, &media);
 
     while (running) {
         MSG msg;
@@ -623,11 +698,47 @@ int run_gui() {
             DispatchMessageW(&msg);
         }
         nk_input_end(ctx);
-        file_browser_run(&browser, ctx);
+        switch (scene) {
+        case 0:
+            switch (gui_main_run(ctx, curr_path)) {
+            case -1:
+                PostQuitMessage(0);
+                break;
+            case 1:
+                scene = 1;
+                nk_gdip_set_font(font[1]);
+                update_window_header_height(ctx);
+                strcat(curr_path, "/");
+                file_browser_reload_directory_content(&browser, curr_path);
+                break;
+            case 2:
+            default:
+                break;
+            }
+            break;
+        case 1: {
+            int len;
+            int res = file_browser_run(&browser, ctx);
+            if (res != 0) {
+                scene = 0;
+                nk_gdip_set_font(font[0]);
+                update_window_header_height(ctx);
+                if (res > 0) {
+                    snprintf(curr_path, 512, "%s", browser.directory);
+                }
+            }
+            len = strlen(curr_path);
+            if (len && curr_path[len - 1] == '/') curr_path[len - 1] = 0;
+            break;
+        }
+        default:
+            break;
+        }
         nk_gdip_render(NK_ANTI_ALIASING_ON, nk_rgb(30, 30, 30));
     }
 
-    nk_gdipfont_del(font);
+    nk_gdipfont_del(font[0]);
+    nk_gdipfont_del(font[1]);
     nk_gdip_shutdown();
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
     return 0;
