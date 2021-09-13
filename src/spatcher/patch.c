@@ -7,6 +7,7 @@
 
 #include <stdint.h>
 
+static void *cb_opaque = NULL;
 static info_callback_t info_cb = NULL;
 static progress_callback_t progress_cb = NULL;
 static message_callback_t message_cb = NULL;
@@ -27,6 +28,10 @@ static int sp_getblk(xd3_stream *stream, xd3_source *source, xoff_t blkno) {
     source->onblk = bytes;
     source->curblk = blkdata;
     return 0;
+}
+
+void set_callback_opaque(void *opaque) {
+    cb_opaque = opaque;
 }
 
 void set_info_callback(info_callback_t cb) {
@@ -92,7 +97,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
             fsrc = vfs.open(src_path ? src_path : name, VFS_FILE_ACCESS_READ, 0);
         }
         if (!fsrc) {
-            if (message_cb) message_cb(-1, "Unable to open source file!");
+            if (message_cb) message_cb(cb_opaque, -1, "Unable to open source file!");
             goto end;
         }
     }
@@ -105,7 +110,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
         vfs.mkdir(output_path);
         snprintf(path, 1024, "%s/%s", output_path, name);
         if (type == 4) {
-            if (info_cb) info_cb(path, 0, 4);
+            if (info_cb) info_cb(cb_opaque, path, 0, 4);
             // fprintf(stdout, "Delete file: %s\n", path);
             ret = vfs.remove(path);
             goto end;
@@ -129,7 +134,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
 #endif
         ;
         if (type == 4) {
-            if (info_cb) info_cb(output_path, 0, 4);
+            if (info_cb) info_cb(cb_opaque, output_path, 0, 4);
             // fprintf(stdout, "Delete file: %s\n", output_path);
             ret = vfs.remove(output_path);
             goto end;
@@ -148,7 +153,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
         fout = vfs.open(output_path, VFS_FILE_ACCESS_WRITE, 0);
     }
     if (!fout) {
-        if (message_cb) message_cb(-1, "Unable to write output file!");
+        if (message_cb) message_cb(cb_opaque, -1, "Unable to write output file!");
         ret = -1;
         goto end;
     }
@@ -160,8 +165,8 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
         if (type == 2) {
             int64_t left = inp_size;
             uint8_t buf[256 * 1024];
-            if (info_cb) info_cb(vfs.get_path(fout), inp_size, 2);
-            if (progress_cb) progress_cb(0);
+            if (info_cb) info_cb(cb_opaque, vfs.get_path(fout), inp_size, 2);
+            if (progress_cb) progress_cb(cb_opaque, 0);
             while (left > 0) {
                 int64_t bytes = vfs.read(input_file, buf, left < 256 * 1024 ? left : 256 * 1024);
                 if (bytes <= 0) {
@@ -169,9 +174,9 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
                 }
                 vfs.write(fout, buf, bytes);
                 left -= bytes;
-                if (progress_cb) progress_cb(inp_size - left);
+                if (progress_cb) progress_cb(cb_opaque, inp_size - left);
             }
-            if (progress_cb) progress_cb(-1);
+            if (progress_cb) progress_cb(cb_opaque, -1);
         } else {
             CLzmaDec dec;
             uint8_t props[LZMA_PROPS_SIZE];
@@ -182,8 +187,8 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
             int64_t left = inp_size;
             total = 0;
             vfs.read(input_file, &output_size, sizeof(uint32_t));
-            if (info_cb) info_cb(vfs.get_path(fout), output_size, 3);
-            if (progress_cb) progress_cb(0);
+            if (info_cb) info_cb(cb_opaque, vfs.get_path(fout), output_size, 3);
+            if (progress_cb) progress_cb(cb_opaque, 0);
             // fprintf(stdout, "Original size: %'u\n", output_size);
             vfs.read(input_file, props, LZMA_PROPS_SIZE);
             left -= LZMA_PROPS_SIZE + sizeof(uint32_t);
@@ -211,7 +216,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
                     }
                     vfs.write(fout, buf_out, sz_output);
                     total += sz_output;
-                    if (progress_cb) progress_cb(total);
+                    if (progress_cb) progress_cb(cb_opaque, total);
                 }
                 left -= bytes;
             }
@@ -222,18 +227,18 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
                 if (ret == SZ_OK && sz_output != 0) {
                     vfs.write(fout, buf_out, sz_output);
                     total += sz_output;
-                    if (progress_cb) progress_cb(total);
+                    if (progress_cb) progress_cb(cb_opaque, total);
                 }
             }
             LzmaDec_Free(&dec, &my_alloc);
-            if (progress_cb) progress_cb(-1);
+            if (progress_cb) progress_cb(cb_opaque, -1);
         }
         ret = 0;
         goto end;
     }
     inp = malloc(inp_size);
     if (!inp) {
-        if (message_cb) message_cb(-1, "Out of memory!");
+        if (message_cb) message_cb(cb_opaque, -1, "Out of memory!");
         goto end;
     }
     if (vfs.read(input_file, inp, inp_size) < inp_size) {
@@ -249,14 +254,14 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
     config.opaque = &blkdata;
     ret = xd3_config_stream(&stream, &config);
     if (ret != 0) {
-        if (message_cb) message_cb(-1, "Error create stream!");
+        if (message_cb) message_cb(cb_opaque, -1, "Error create stream!");
         goto end;
     }
     source.blksize  = 256 * 1024;
     source.ioh = fsrc;
     ret = xd3_set_source(&stream, &source);
     if (ret != 0) {
-        if (message_cb) message_cb(-1, "Error set source and size!");
+        if (message_cb) message_cb(cb_opaque, -1, "Error set source and size!");
         goto end;
     }
 
@@ -274,7 +279,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
         inp = malloc(orig_size);
         if (!inp) {
             inp = old;
-            if (message_cb) message_cb(-1, "Out of memory!");
+            if (message_cb) message_cb(cb_opaque, -1, "Out of memory!");
             goto end;
         }
         if (LzmaDecode(inp, &orig_size,
@@ -283,7 +288,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
                        LZMA_FINISH_END, &status, &my_alloc) != SZ_OK) {
             free(inp);
             inp = old;
-            if (message_cb) message_cb(-1, "Error decompress patch data!");
+            if (message_cb) message_cb(cb_opaque, -1, "Error decompress patch data!");
             goto end;
         }
         inp_size = orig_size;
@@ -296,8 +301,8 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
     ipos += n;
 
     total = 0;
-    if (info_cb) info_cb(vfs.get_path(fout), -1, type);
-    if (progress_cb) progress_cb(0);
+    if (info_cb) info_cb(cb_opaque, vfs.get_path(fout), -1, type);
+    if (progress_cb) progress_cb(cb_opaque, 0);
     data_size = stream.winsize;
     data = malloc(data_size);
     while(1) {
@@ -306,7 +311,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
         case XD3_INPUT: {
             n = xd3_min(stream.winsize, inp_size - ipos);
             if (n == 0) {
-                if (progress_cb) progress_cb(-1);
+                if (progress_cb) progress_cb(cb_opaque, -1);
                 ret = 0; goto end;
             }
             xd3_avail_input(&stream, inp + ipos, n);
@@ -316,7 +321,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
         case XD3_OUTPUT:
             vfs.write(fout, stream.next_out, stream.avail_out);
             total += stream.avail_out;
-            if (progress_cb) progress_cb(total);
+            if (progress_cb) progress_cb(cb_opaque, total);
             xd3_consume_output(&stream);
             break;
         case XD3_GOTHEADER:
@@ -325,7 +330,7 @@ int do_single_patch(struct vfs_file_handle *input_file, const char *src_path, co
             /* no action necessary */
             break;
         default:
-            if (message_cb) message_cb(-1, "Error decode stream: %d", ret);
+            if (message_cb) message_cb(cb_opaque, -1, "Error decode stream: %d", ret);
             goto end;
         }
     }

@@ -6,7 +6,6 @@ add_executable(spatcher
     spatcher.c)
 add_executable(spatcher_header_win32 WIN32
     patch.c patch.h
-    selector.c selector.h
     gui_win32.c gui_win32.h
     spatcher_header_win32.c
     whereami.c whereami.h

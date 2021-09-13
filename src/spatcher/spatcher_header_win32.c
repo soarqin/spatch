@@ -4,7 +4,9 @@
  */
 
 #include "patch.h"
+/*
 #include "selector.h"
+*/
 #include "vfs.h"
 #include "util.h"
 #include "whereami.h"
@@ -41,10 +43,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
     vfs.read(input_file, &tag, sizeof(uint64_t));
     if (tag == 0xBADC0DEDEADBEEFULL) {
         bytes_left = vfs.size(input_file) - patch_offset - sizeof(uint32_t) - sizeof(uint64_t);
+/*
         if (browse_for_directory(NULL, browsed_selected_path, 1024) != 0) {
             ret = -1;
             goto end;
         }
+*/
         vfs.seek(input_file, patch_offset, VFS_SEEK_POSITION_START);
         ret = do_multi_patch(NULL, input_file, bytes_left, browsed_selected_path);
     }

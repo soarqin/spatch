@@ -20,6 +20,9 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 500
 
+static void (*apply_patch_cb)(void*) = NULL;
+static void *apply_patch_cb_opaque = NULL;
+
 struct icons {
     struct nk_image desktop;
     struct nk_image home;
@@ -742,4 +745,9 @@ int run_gui(const char *init_path) {
     nk_gdip_shutdown();
     UnregisterClassW(wc.lpszClassName, wc.hInstance);
     return 0;
+}
+
+void set_apply_patch_callback(void (*cb)(void*), void *opaque) {
+    apply_patch_cb = cb;
+    apply_patch_cb_opaque = opaque;
 }

@@ -8,13 +8,13 @@
 static char output_prefix[1024] = {0};
 static int64_t total_file_size = -1;
 
-void info_callback(const char *filename, int64_t file_size, int diff_type) {
+void info_callback(void *opaque, const char *filename, int64_t file_size, int diff_type) {
     const char *diff_type_text[] = {"Patching", "Patching", "Adding  ", "Adding  ", "Deleting"};
     snprintf(output_prefix, 1024, "%s %s", diff_type_text[diff_type], filename);
     total_file_size = file_size;
 }
 
-void progress_callback(int64_t progress) {
+void progress_callback(void *opaque, int64_t progress) {
     if (progress < 0) {
         fprintf(stdout, "\n");
         return;
@@ -26,7 +26,7 @@ void progress_callback(int64_t progress) {
     }
 }
 
-void message_callback(int err, const char *msg, ...) {
+void message_callback(void *opaque, int err, const char *msg, ...) {
     va_list l;
     FILE *output = err != 0 ? stderr : stdout;
     va_start(l, msg);

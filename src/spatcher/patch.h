@@ -11,10 +11,11 @@ enum {
     DIFF_TYPE_DELETE = 4,
 };
 
-typedef void (*info_callback_t)(const char *filename, int64_t file_size, int diff_type);
-typedef void (*progress_callback_t)(int64_t progress);
-typedef void (*message_callback_t)(int err, const char *msg, ...);
+typedef void (*info_callback_t)(void *opaque, const char *filename, int64_t file_size, int diff_type);
+typedef void (*progress_callback_t)(void *opaque, int64_t progress);
+typedef void (*message_callback_t)(void *opaque, int err, const char *msg, ...);
 
+extern void set_callback_opaque(void *opaque);
 extern void set_info_callback(info_callback_t cb);
 extern void set_progress_callback(progress_callback_t cb);
 extern void set_message_callback(message_callback_t cb);
