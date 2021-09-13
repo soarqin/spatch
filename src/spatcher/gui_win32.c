@@ -20,7 +20,7 @@
 #define WINDOW_WIDTH 800
 #define WINDOW_HEIGHT 500
 
-static void (*apply_patch_cb)(void*) = NULL;
+static void (*apply_patch_cb)(void*, const char*) = NULL;
 static void *apply_patch_cb_opaque = NULL;
 
 struct icons {
@@ -545,6 +545,35 @@ static int gui_main_run(struct nk_context *ctx, const char *curr_dir) {
     return ret;
 }
 
+static int64_t patch_progress = 0, patch_total = 0;
+static char patch_message[1024] = {0};
+
+static int patch_progress_run(struct nk_context *ctx) {
+    int ret = 0;
+    if (nk_begin(ctx, "spatch", nk_rect(0, 0, WINDOW_WIDTH, WINDOW_HEIGHT),
+                 NK_WINDOW_TITLE | NK_WINDOW_BORDER | NK_WINDOW_NO_SCROLLBAR)) {
+        struct nk_rect total_space;
+        char progtext[64];
+        total_space = nk_window_get_content_region(ctx);
+        nk_layout_space_begin(ctx, NK_DYNAMIC, total_space.h, patch_progress < 0 ? 4 : 3);
+        nk_layout_space_push(ctx, nk_rect(0.1, 0.35, 0.8, 0.09));
+        nk_label(ctx, patch_message, NK_TEXT_CENTERED);
+        nk_layout_space_push(ctx, nk_rect(0.2, 0.45, 0.6, 0.09));
+        nk_prog(ctx, patch_progress, patch_total, nk_false);
+        snprintf(progtext, 64, "%d%%", patch_progress < 0 ? 100 : patch_total ? (int)(patch_progress * 100 / patch_total) : 0);
+        nk_label(ctx, progtext, NK_TEXT_CENTERED);
+        if (patch_progress < 0) {
+            nk_layout_space_push(ctx, nk_rect(0.3, 0.55, 0.4, 0.09));
+            if (nk_button_label(ctx, "Finish")) {
+                ret = -1;
+            }
+        }
+        nk_layout_space_end(ctx);
+    }
+    nk_end(ctx);
+    return ret;
+}
+
 static int header_height = 0;
 static int header_caporgx = 0, header_caporgy = 0, header_capx = 0, header_capy = 0, header_cap = 0;
 
@@ -611,6 +640,15 @@ WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam) {
     return DefWindowProcW(wnd, msg, wparam, lparam);
 }
 
+DWORD WINAPI patchThread(LPVOID lpThreadParameter) {
+    if (apply_patch_cb) {
+        apply_patch_cb(apply_patch_cb_opaque, (const char*)lpThreadParameter);
+    }
+    return 0;
+}
+
+static HWND main_wnd;
+
 int run_gui(const char *init_path) {
     GdipFont *font[2];
     struct nk_context *ctx;
@@ -618,7 +656,6 @@ int run_gui(const char *init_path) {
     WNDCLASSW wc;
     DWORD style = 0;
     DWORD exstyle = 0;
-    HWND wnd;
     int running = 1;
     int needs_refresh = 1;
 
@@ -626,6 +663,7 @@ int run_gui(const char *init_path) {
     struct media media;
     int scene = 0;
     char curr_path[512];
+    HANDLE thread_hdl = INVALID_HANDLE_VALUE;
 
     snprintf(curr_path, 512, "%s", init_path);
 
@@ -639,25 +677,25 @@ int run_gui(const char *init_path) {
     wc.lpszClassName = L"NuklearWindowClass";
     RegisterClassW(&wc);
 
-    wnd = CreateWindowExW(exstyle, wc.lpszClassName, L"Nuklear Demo", style,
-                          CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
-                          NULL, NULL, wc.hInstance, NULL);
-    SetWindowLong(wnd, GWL_STYLE, 0);
+    main_wnd = CreateWindowExW(exstyle, wc.lpszClassName, L"Nuklear Demo", style,
+                               CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT, CW_USEDEFAULT,
+                               NULL, NULL, wc.hInstance, NULL);
+    SetWindowLong(main_wnd, GWL_STYLE, 0);
     {
-        HMONITOR monitor = MonitorFromWindow(wnd, MONITOR_DEFAULTTONEAREST);
+        HMONITOR monitor = MonitorFromWindow(main_wnd, MONITOR_DEFAULTTONEAREST);
         MONITORINFO mi;
         mi.cbSize = sizeof(MONITORINFO);
         GetMonitorInfo(monitor, &mi);
-        MoveWindow(wnd,
+        MoveWindow(main_wnd,
                    (mi.rcWork.left + mi.rcWork.right - WINDOW_WIDTH) / 2,
                    (mi.rcWork.top + mi.rcWork.bottom - WINDOW_HEIGHT) / 2,
                    WINDOW_WIDTH, WINDOW_HEIGHT,
                    FALSE);
     }
-    ShowWindow(wnd, SW_SHOW);
+    ShowWindow(main_wnd, SW_SHOW);
 
     /* GUI */
-    ctx = nk_gdip_init(wnd, WINDOW_WIDTH, WINDOW_HEIGHT);
+    ctx = nk_gdip_init(main_wnd, WINDOW_WIDTH, WINDOW_HEIGHT);
     font[0] = nk_gdipfont_create("Arial", 16, FontStyleBold);
     font[1] = nk_gdipfont_create("Arial", 14, FontStyleRegular);
     nk_gdip_set_font(font[0]);
@@ -715,6 +753,10 @@ int run_gui(const char *init_path) {
                 file_browser_reload_directory_content(&browser, curr_path);
                 break;
             case 2:
+                scene = 2;
+                nk_gdip_set_font(font[0]);
+                thread_hdl = CreateThread(NULL, 0, &patchThread, curr_path, 0, NULL);
+                break;
             default:
                 break;
             }
@@ -735,11 +777,18 @@ int run_gui(const char *init_path) {
             break;
         }
         default:
+            if (patch_progress_run(ctx) < 0) {
+                PostQuitMessage(0);
+            }
             break;
         }
         nk_gdip_render(NK_ANTI_ALIASING_ON, nk_rgb(30, 30, 30));
     }
 
+    if (thread_hdl != INVALID_HANDLE_VALUE && thread_hdl != NULL) {
+        TerminateThread(thread_hdl, 0);
+        CloseHandle(thread_hdl);
+    }
     nk_gdipfont_del(font[0]);
     nk_gdipfont_del(font[1]);
     nk_gdip_shutdown();
@@ -747,7 +796,18 @@ int run_gui(const char *init_path) {
     return 0;
 }
 
-void set_apply_patch_callback(void (*cb)(void*), void *opaque) {
+void set_apply_patch_callback(void (*cb)(void*, const char*), void *opaque) {
     apply_patch_cb = cb;
     apply_patch_cb_opaque = opaque;
+}
+
+void set_apply_patch_progress(int64_t prog, int64_t total) {
+    patch_progress = prog;
+    patch_total = total;
+    PostMessage(main_wnd, WM_USER + 1, 0, 0);
+}
+
+void set_apply_patch_message(const char *message) {
+    snprintf(patch_message, 1024, "%s", message);
+    PostMessage(main_wnd, WM_USER + 1, 0, 0);
 }
