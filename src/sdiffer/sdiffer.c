@@ -1,3 +1,6 @@
+#define UNICODE
+#define _UNICODE
+
 #include "xdelta3.h"
 
 #include "LzmaEnc.h"
@@ -5,6 +8,7 @@
 #include "vfs.h"
 #include "util.h"
 #include "memstream.h"
+#include "ini.h"
 
 #include <stdlib.h>
 #include <stdint.h>
@@ -412,19 +416,176 @@ int make_dir_deletes(const char *relpath, const char *source_dir, const char *in
     }
 }
 
+struct config {
+    char source_path[512];
+    char input_path[512];
+    char output_path[512];
+    char icon_file[512];
+    int compress;
+};
+
+int sdiffer_ini_handler(void* user, const char* section,
+                    const char* name, const char* value) {
+    struct config *config = user;
+    if (!strcmp(section, "compare")) {
+        if (!strcmp(name, "from")) {
+            snprintf(config->source_path, 512, "%s", value);
+        } else if (!strcmp(name, "to")) {
+            snprintf(config->input_path, 512, "%s", value);
+        }
+    } else if (!strcmp(section, "output")) {
+        if (!strcmp(name, "path")) {
+            snprintf(config->output_path, 512, "%s", value);
+#if defined(_WIN32)
+        } else if (!strcmp(name, "icon")) {
+            snprintf(config->icon_file, 512, "%s", value);
+#endif
+        } else if (!strcmp(name, "compress")) {
+            config->compress = strcmp(value, "0") != 0 && strcmp(value, "false") != 0;
+        }
+    }
+    return 1;
+}
+
+#if defined(_WIN32)
+
+struct ICONDIRENTRY {
+    BYTE        bWidth;          // Width, in pixels, of the image
+    BYTE        bHeight;         // Height, in pixels, of the image
+    BYTE        bColorCount;     // Number of colors in image (0 if >=8bpp)
+    BYTE        bReserved;       // Reserved ( must be 0)
+    WORD        wPlanes;         // Color Planes
+    WORD        wBitCount;       // Bits per pixel
+    DWORD       dwBytesInRes;    // How many bytes in this resource?
+    DWORD       dwImageOffset;   // Where in the file is this image?
+};
+
+struct ICONDIR {
+    WORD           idReserved;   // Reserved (must be 0)
+    WORD           idType;       // Resource Type (1 for icons)
+    WORD           idCount;      // How many images?
+    // ICONDIRENTRY   idEntries[1]; // An entry for each image (idCount of 'em)
+};
+
+struct MEMICONDIRENTRY {
+    BYTE        bWidth;          // Width, in pixels, of the image
+    BYTE        bHeight;         // Height, in pixels, of the image
+    BYTE        bColorCount;     // Number of colors in image (0 if >=8bpp)
+    BYTE        bReserved;       // Reserved ( must be 0)
+    WORD        wPlanes;         // Color Planes
+    WORD        wBitCount;       // Bits per pixel
+    DWORD       dwBytesInRes;    // How many bytes in this resource?
+    WORD        nID;             // The ID.
+};
+
+struct MEMICONDIR {
+    WORD           idReserved;   // Reserved (must be 0)
+    WORD           idType;       // Resource Type (1 for icons)
+    WORD           idCount;      // How many images?
+    // MEMICONDIRENTRY   idEntries[1]; // An entry for each image (idCount of 'em)
+};
+
+int setIconByData(LPCWSTR exe_filename, void *iconData) {
+    HANDLE fileHandle = BeginUpdateResourceW(exe_filename, FALSE);
+    struct ICONDIR* icondir;
+    int langId;
+    size_t entriesSize;
+    size_t memicondirBytes;
+    struct MEMICONDIR *memicondir;
+    struct MEMICONDIRENTRY *entries;
+    int resourceId = 1;
+    char *cursor;
+    if(!fileHandle) {
+        short errorCode = GetLastError();
+        fprintf(stdout, "Error: BeginUpdateResource failed with error code %i (0x%x).\n", errorCode, errorCode);
+        return -1;
+    }
+    icondir = iconData;
+    langId = MAKELANGID(LANG_ENGLISH, SUBLANG_DEFAULT);
+
+    entriesSize = sizeof(struct MEMICONDIRENTRY) * icondir->idCount;
+    memicondirBytes = sizeof(struct MEMICONDIR) + entriesSize;
+    memicondir = (struct MEMICONDIR*)malloc(memicondirBytes);
+    memset(memicondir, 0, memicondirBytes);
+
+    entries = (struct MEMICONDIRENTRY*)(((char*)memicondir) + sizeof(struct MEMICONDIR));
+    uint8_t *entriesU8 = (uint8_t*)entries;
+
+    memicondir->idType = 1;
+    memicondir->idCount = icondir->idCount;
+
+    cursor = iconData + 6;
+    for(int i = 0; i < icondir->idCount; i++) {
+        struct MEMICONDIRENTRY *destEntry;
+        struct ICONDIRENTRY* srcEntry = (struct ICONDIRENTRY*)cursor;
+        cursor += 16;
+        destEntry = (struct MEMICONDIRENTRY*)(entriesU8 + 14 * i);
+        destEntry->bWidth        = srcEntry->bWidth;
+        destEntry->bHeight       = srcEntry->bHeight;
+        destEntry->bColorCount   = srcEntry->bColorCount;
+        destEntry->bReserved     = srcEntry->bReserved;
+        destEntry->wPlanes       = srcEntry->wPlanes;
+        destEntry->wBitCount     = srcEntry->wBitCount;
+        destEntry->dwBytesInRes  = srcEntry->dwBytesInRes;
+        destEntry->nID           = (unsigned short)(resourceId + i);
+
+        if(!UpdateResourceW(fileHandle, RT_ICON, MAKEINTRESOURCEW(destEntry->nID), langId, iconData + srcEntry->dwImageOffset, destEntry->dwBytesInRes)) {
+            short errorCode = GetLastError();
+            fprintf(stderr, "Error: UpdateResource failed with error code %i (0x%x).\n", errorCode, errorCode);
+            return -1;
+        }
+    }
+
+    if(UpdateResourceW(fileHandle, RT_GROUP_ICON, MAKEINTRESOURCE(resourceId), langId, memicondir, (6 + entriesSize))) {
+        EndUpdateResourceW(fileHandle, FALSE);
+        free(memicondir);
+        return 0;
+    }
+
+    EndUpdateResourceW(fileHandle, TRUE);
+    free(memicondir);
+    return -1;
+}
+
+int setIconByFilename(LPCWSTR exeFilename, const char* iconFilename) {
+    char* iconData;
+    struct vfs_file_handle* file = vfs.open(iconFilename, VFS_FILE_ACCESS_READ, 0);
+    int size;
+    int result;
+    if(!file) {
+        return -1;
+    }
+    size = vfs.size(file);
+    iconData = malloc(sizeof(char) * size);
+    vfs.read(file, iconData, size);
+    vfs.close(file);
+    result = setIconByData(exeFilename, iconData);
+    free(iconData);
+    return result;
+}
+
+#endif
+
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
     int ret = -1;
-    int compress = argc > 4 && argv[4][0] != '0';
 #if defined(_WIN32)
     uint32_t org_tail_offset = 0;
 #endif
+    struct config config = {{0}};
     setlocale(LC_NUMERIC, "");
+    ini_parse(argc > 1 ? argv[1] : "sdiffer.ini", sdiffer_ini_handler, &config);
 #if defined(_WIN32)
-    util_copy_file("spatcher_header_win32.exe", argv[3]);
-    output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE | VFS_FILE_ACCESS_UPDATE_EXISTING, 0);
+    util_copy_file("spatcher_header_win32.exe", config.output_path);
+    {
+        WCHAR outpath[MAX_PATH];
+        HANDLE hUpdate;
+        util_utf8_to_ucs(config.output_path, outpath, MAX_PATH);
+        setIconByFilename(outpath, config.icon_file);
+    }
+    output_file = vfs.open(config.output_path, VFS_FILE_ACCESS_WRITE | VFS_FILE_ACCESS_UPDATE_EXISTING, 0);
 #else
-    output_file = vfs.open(argv[3], VFS_FILE_ACCESS_WRITE, 0);
+    output_file = vfs.open(config.output_path, VFS_FILE_ACCESS_WRITE, 0);
 #endif
     if (!output_file) {
         fprintf(stderr, "Unable to write output file!\n");
@@ -434,27 +595,27 @@ int main(int argc, char *argv[]) {
     vfs.seek(output_file, 0, VFS_SEEK_POSITION_END);
     org_tail_offset = vfs.tell(output_file);
 #endif
-    if ((argv[1][0] == '-' && argv[1][1] == 0) || vfs.stat(argv[1], NULL) & VFS_STAT_IS_DIRECTORY) {
-        if (!(vfs.stat(argv[2], NULL) & VFS_STAT_IS_DIRECTORY)) {
-            fprintf(stderr, "Second parameter is not a directory!\n");
+    if (!strcmp(config.source_path, "-") || vfs.stat(config.source_path, NULL) & VFS_STAT_IS_DIRECTORY) {
+        if (!(vfs.stat(config.input_path, NULL) & VFS_STAT_IS_DIRECTORY)) {
+            fprintf(stderr, "Path of `to` is not a directory!\n");
             return -1;
         }
-        ret = make_dir_diff("", argv[1], argv[2], output_file, compress);
+        ret = make_dir_diff("", config.source_path, config.input_path, output_file, config.compress);
         if (ret == 0) {
-            ret = make_dir_deletes("", argv[1], argv[2], output_file);
+            ret = make_dir_deletes("", config.source_path, config.input_path, output_file);
         }
         goto end;
     }
-    source_file = (argv[1][0] == '-' && argv[1][1] == 0) ? NULL : vfs.open(argv[1], VFS_FILE_ACCESS_READ, 0);
-    input_file = vfs.open(argv[2], VFS_FILE_ACCESS_READ, 0);
+    source_file = !strcmp(config.source_path, "-") ? NULL : vfs.open(config.source_path, VFS_FILE_ACCESS_READ, 0);
+    input_file = vfs.open(config.input_path, VFS_FILE_ACCESS_READ, 0);
     if (!input_file) {
         fprintf(stderr, "Unable to read from input file!\n");
         goto end;
     }
     if (source_file) {
-        ret = make_diff(argv[1], source_file, input_file, output_file, compress);
+        ret = make_diff(config.source_path, source_file, input_file, output_file, config.compress);
     } else {
-        ret = make_add_file(argv[2], input_file, output_file, compress);
+        ret = make_add_file(config.input_path, input_file, output_file, config.compress);
     }
 
 end:

@@ -1,3 +1,4 @@
+add_subdirectory(inih)
 add_subdirectory(lzma)
 add_subdirectory(xdelta)
 add_subdirectory(nuklear)

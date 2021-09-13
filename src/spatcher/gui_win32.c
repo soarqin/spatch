@@ -1,3 +1,6 @@
+#define UNICODE
+#define _UNICODE
+
 #include "gui_win32.h"
 
 #include "vfs.h"
@@ -622,7 +625,7 @@ WindowProc(HWND wnd, UINT msg, WPARAM wparam, LPARAM lparam) {
             return 0;
         }
     case WM_CREATE: {
-        HICON icon = LoadIcon(NULL, MAKEINTRESOURCE(1000));
+        HICON icon = LoadIconW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1));
         SendMessage(wnd, WM_SETICON, ICON_SMALL, (LPARAM)icon);
         SendMessage(wnd, WM_SETICON, ICON_BIG, (LPARAM)icon);
         SendMessage(wnd, WM_SETICON, ICON_SMALL2, (LPARAM)icon);
@@ -672,8 +675,8 @@ int run_gui(const char *init_path) {
     wc.style = CS_DBLCLKS;
     wc.lpfnWndProc = WindowProc;
     wc.hInstance = GetModuleHandleW(0);
-    wc.hIcon = LoadIcon(NULL, MAKEINTRESOURCE(1000));
-    wc.hCursor = LoadCursor(NULL, IDC_ARROW);
+    wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(1));
+    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
     wc.lpszClassName = L"NuklearWindowClass";
     RegisterClassW(&wc);
 
