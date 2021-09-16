@@ -1,5 +1,6 @@
 if(WIN32)
-    set(RES_FILES spatcher.rc spatcher.ico)
+    FILE(GLOB PNG_FILES icons/*.png)
+    set(RES_FILES spatcher.rc ${PNG_FILES})
 endif()
 add_executable(spatcher
     patch.c patch.h

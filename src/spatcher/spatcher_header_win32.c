@@ -7,6 +7,7 @@
 /*
 #include "selector.h"
 */
+#include "patch_config.h"
 #include "vfs.h"
 #include "util.h"
 #include "whereami.h"
@@ -63,7 +64,7 @@ void patch_cb(void *opaque, const char *path) {
 int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine, int nShowCmd) {
     int ret = 0;
     char browsed_selected_path[1024];
-    uint32_t patch_offset = 0;
+    int64_t patch_offset = 0, config_offset = 0;
     uint64_t tag = 0;
     struct vfs_file_handle *input_file = NULL;
     char exepath[1024];
@@ -77,12 +78,24 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         if (exepath[i] == '\\') exepath[i] = '/';
     }
     input_file = vfs.open(exepath, VFS_FILE_ACCESS_READ, 0);
-    vfs.seek(input_file, -(int)(sizeof(uint32_t) + sizeof(uint64_t)), VFS_SEEK_POSITION_END);
-    vfs.read(input_file, &patch_offset, sizeof(uint32_t));
+    vfs.seek(input_file, -(int)(sizeof(int64_t) * 2 + sizeof(uint64_t)), VFS_SEEK_POSITION_END);
+    vfs.read(input_file, &patch_offset, sizeof(int64_t));
+    vfs.read(input_file, &config_offset, sizeof(int64_t));
     vfs.read(input_file, &tag, sizeof(uint64_t));
     if (tag == 0xBADC0DEDEADBEEFULL) {
+        if (config_offset > 0) {
+            patch_config_t patch_config;
+            vfs.seek(input_file, config_offset, VFS_SEEK_POSITION_START);
+            if (vfs.read(input_file, &patch_config, sizeof(patch_config_t)) != sizeof(patch_config_t)
+                || patch_config.format_version != SPATCH_FORMAT_VERSION) {
+                ret = -1;
+                goto end;
+            }
+        }
         ctx.input_file = input_file;
-        ctx.bytes_left = vfs.size(input_file) - patch_offset - sizeof(uint32_t) - sizeof(uint64_t);
+        ctx.bytes_left = config_offset > 0 ?
+            config_offset - patch_offset :
+            vfs.size(input_file) - patch_offset - (sizeof(int64_t) * 2 + sizeof(uint64_t));
         ctx.patch_offset = patch_offset;
         ctx.progress = 0;
         ctx.total = 0;

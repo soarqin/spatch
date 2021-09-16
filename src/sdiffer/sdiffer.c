@@ -5,6 +5,7 @@
 
 #include "LzmaEnc.h"
 
+#include "patch_config.h"
 #include "vfs.h"
 #include "util.h"
 #include "memstream.h"
@@ -569,9 +570,7 @@ int setIconByFilename(LPCWSTR exeFilename, const char* iconFilename) {
 int main(int argc, char *argv[]) {
     struct vfs_file_handle *source_file = NULL, *input_file = NULL, *output_file = NULL;
     int ret = -1;
-#if defined(_WIN32)
-    uint32_t org_tail_offset = 0;
-#endif
+    int64_t org_tail_offset = 0;
     struct config config = {{0}};
     setlocale(LC_NUMERIC, "");
     ini_parse(argc > 1 ? argv[1] : "sdiffer.ini", sdiffer_ini_handler, &config);
@@ -593,8 +592,8 @@ int main(int argc, char *argv[]) {
     }
 #if defined(_WIN32)
     vfs.seek(output_file, 0, VFS_SEEK_POSITION_END);
-    org_tail_offset = vfs.tell(output_file);
 #endif
+    org_tail_offset = vfs.tell(output_file);
     if (!strcmp(config.source_path, "-") || vfs.stat(config.source_path, NULL) & VFS_STAT_IS_DIRECTORY) {
         if (!(vfs.stat(config.input_path, NULL) & VFS_STAT_IS_DIRECTORY)) {
             fprintf(stderr, "Path of `to` is not a directory!\n");
@@ -621,7 +620,11 @@ int main(int argc, char *argv[]) {
 end:
     if (ret == 0) {
         uint64_t tag = 0xBADC0DEDEADBEEFULL;
-        vfs.write(output_file, &org_tail_offset, sizeof(uint32_t));
+        int64_t org_config_offset = vfs.tell(output_file);
+        patch_config_t patch_config = { SPATCH_FORMAT_VERSION };
+        vfs.write(output_file, &patch_config, sizeof(patch_config_t));
+        vfs.write(output_file, &org_tail_offset, sizeof(int64_t));
+        vfs.write(output_file, &org_config_offset, sizeof(int64_t));
         vfs.write(output_file, &tag, sizeof(uint64_t));
     }
     if (output_file) vfs.close(output_file);
