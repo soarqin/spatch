@@ -1,5 +1,6 @@
 #include "patch.h"
 
+#include "patch_config.h"
 #include "util.h"
 #include <stdio.h>
 #include <stdarg.h>
@@ -40,6 +41,8 @@ int main(int argc, char *argv[]) {
     int is_dir = 0;
     struct vfs_file_handle *input_file = NULL;
     int ret;
+    int64_t patch_offset = 0, config_offset = 0;
+    uint64_t tag = 0;
     int64_t bytes_left = 0;
     setlocale(LC_NUMERIC, "");
     switch (argc) {
@@ -72,7 +75,27 @@ int main(int argc, char *argv[]) {
         ret = -1;
         goto end;
     }
-    bytes_left = vfs.size(input_file);
+    vfs.seek(input_file, -(int)(sizeof(int64_t) * 2 + sizeof(uint64_t)), VFS_SEEK_POSITION_END);
+    vfs.read(input_file, &patch_offset, sizeof(int64_t));
+    vfs.read(input_file, &config_offset, sizeof(int64_t));
+    vfs.read(input_file, &tag, sizeof(uint64_t));
+    if (tag != 0xBADC0DEDEADBEEFULL) {
+        ret = -1;
+        goto end;
+    }
+    if (config_offset > 0) {
+        patch_config_t patch_config;
+        vfs.seek(input_file, config_offset, VFS_SEEK_POSITION_START);
+        if (vfs.read(input_file, &patch_config, sizeof(patch_config_t)) != sizeof(patch_config_t)
+            || patch_config.format_version != SPATCH_FORMAT_VERSION) {
+            ret = -1;
+            goto end;
+        }
+    }
+    vfs.seek(input_file, patch_offset, VFS_SEEK_POSITION_START);
+    bytes_left = config_offset > 0 ?
+                 config_offset - patch_offset :
+                 vfs.size(input_file) - patch_offset - (sizeof(int64_t) * 2 + sizeof(uint64_t));
     set_info_callback(info_callback);
     set_progress_callback(progress_callback);
     set_message_callback(message_callback);

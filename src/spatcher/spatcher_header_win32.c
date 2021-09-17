@@ -94,8 +94,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR lpCmdLine
         }
         ctx.input_file = input_file;
         ctx.bytes_left = config_offset > 0 ?
-            config_offset - patch_offset :
-            vfs.size(input_file) - patch_offset - (sizeof(int64_t) * 2 + sizeof(uint64_t));
+                         config_offset - patch_offset :
+                         vfs.size(input_file) - patch_offset - (sizeof(int64_t) * 2 + sizeof(uint64_t));
         ctx.patch_offset = patch_offset;
         ctx.progress = 0;
         ctx.total = 0;
