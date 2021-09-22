@@ -32,8 +32,7 @@ void info_cb(void *opaque, const char *filename, int64_t file_size, int diff_typ
     char msg[1024];
     ctx->total = file_size;
     set_apply_patch_progress(ctx->progress, ctx->total);
-    snprintf(msg, 1024, "Patching %s...", filename);
-    set_apply_patch_message(msg);
+    set_apply_patching_file(filename);
 }
 
 void progress_cb(void *opaque, int64_t progress) {

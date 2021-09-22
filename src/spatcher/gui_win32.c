@@ -814,3 +814,8 @@ void set_apply_patch_message(const char *message) {
     snprintf(patch_message, 1024, "%s", message);
     PostMessage(main_wnd, WM_USER + 1, 0, 0);
 }
+
+void set_apply_patching_file(const char *filename) {
+    snprintf(patch_message, 1024, "Patching %s...", filename);
+    PostMessage(main_wnd, WM_USER + 1, 0, 0);
+}
