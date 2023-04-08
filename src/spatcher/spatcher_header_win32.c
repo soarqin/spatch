@@ -1,14 +1,8 @@
-/*
- * Created by Soar on 2021/9/9.
- * Copyright (c) 2021 Northen Kingdom, X.D. Network. All rights reserved.
- */
-
 #include "patch.h"
 /*
 #include "selector.h"
 */
 #include "patch_config.h"
-#include "vfs.h"
 #include "util.h"
 #include "whereami.h"
 
